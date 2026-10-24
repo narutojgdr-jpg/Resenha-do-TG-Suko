@@ -5,7 +5,7 @@ import re
 import subprocess
 from datetime import datetime
 from telethon import TelegramClient
-from telethon.errors import FloodWaitError
+from telethon.errors import FloodWaitError, SessionPasswordNeededError
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -141,7 +141,18 @@ async def scan_source(source, keyword):
 async def main():
     auto_pull()
 
-    await client.start(PHONE)
+    print("Connecting...")
+    await client.connect()
+
+    if not await client.is_user_authorized():
+        await client.send_code_request(PHONE)
+        code = input("Please enter the code you received: ").strip()
+        try:
+            await client.sign_in(PHONE, code)
+        except SessionPasswordNeededError:
+            password = input("Please enter your password: ").strip()
+            await client.sign_in(password=password)
+
     print("Connected. Ready.")
 
     with open("sources.json") as f:
