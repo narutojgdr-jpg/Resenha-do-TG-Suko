@@ -15,7 +15,7 @@ API_HASH = os.getenv("API_HASH")
 PHONE = os.getenv("PHONE")
 
 SESSION = "resenha_session"
-DELAY_BETWEEN = 6
+DELAY_BETWEEN = 5
 
 client = TelegramClient(SESSION, API_ID, API_HASH)
 
@@ -52,24 +52,32 @@ def extract_price(text: str):
                 pass
     return None
 
+def clean_text(text):
+    """Remove emojis and extra spaces for better matching."""
+    if not text:
+        return ""
+    # Remove most emojis and special chars, keep letters and numbers
+    cleaned = re.sub(r'[^a-zA-Z0-9\s]', '', text)
+    return cleaned.lower().strip()
+
 async def click_button(msg, text):
     if not msg or not msg.reply_markup:
         return False
-    text_lower = text.lower().strip()
+    target = clean_text(text)
     markup = msg.reply_markup
     if not hasattr(markup, "rows"):
         return False
     for row in markup.rows:
         for btn in row.buttons:
             if hasattr(btn, "text"):
-                btn_text = btn.text.lower().strip()
-                if text_lower in btn_text or btn_text in text_lower:
+                btn_clean = clean_text(btn.text)
+                if target in btn_clean or btn_clean in target or target == btn_clean:
                     try:
                         await msg.click(btn)
-                        print(f"    Clicked button: {btn.text}")
+                        print(f"    Clicked: {btn.text}")
                         return True
                     except Exception as e:
-                        print(f"    Click failed: {e}")
+                        print(f"    Click error: {e}")
     return False
 
 async def navigate(entity, steps):
@@ -78,17 +86,23 @@ async def navigate(entity, steps):
             print(f"  Step: {step}")
             if step.startswith("/"):
                 await client.send_message(entity, step)
+                await asyncio.sleep(3)
             else:
-                msgs = await client.get_messages(entity, limit=5)
-                clicked = False
-                for m in msgs:
-                    if await click_button(m, step):
-                        clicked = True
+                # Wait a bit and try multiple times to find the button
+                found = False
+                for attempt in range(3):
+                    msgs = await client.get_messages(entity, limit=6)
+                    for m in msgs:
+                        if await click_button(m, step):
+                            found = True
+                            break
+                    if found:
                         break
-                if not clicked:
-                    print(f"    Button not found, sending as text: {step}")
+                    await asyncio.sleep(1.5)
+                if not found:
+                    print(f"    Button '{step}' not found, sending as text")
                     await client.send_message(entity, step)
-            await asyncio.sleep(3)
+                await asyncio.sleep(3)
         except FloodWaitError as e:
             print(f"FloodWait {e.seconds}s")
             await asyncio.sleep(e.seconds + 5)
@@ -107,7 +121,7 @@ async def scan_source(source, keyword):
             return {"source": source["id"], "status": "nav_failed", "price": None}
 
         await asyncio.sleep(2)
-        msgs = await client.get_messages(entity, limit=10)
+        msgs = await client.get_messages(entity, limit=12)
         keyword_lower = keyword.lower()
 
         for msg in msgs:
@@ -115,21 +129,21 @@ async def scan_source(source, keyword):
                 continue
             if keyword_lower in msg.text.lower():
                 price = extract_price(msg.text)
-                print(f"  Found in message: {msg.text[:80]}...")
+                print(f"  Found: {msg.text[:100]}...")
                 return {
                     "source": source["id"],
                     "username": source["username"],
                     "status": "found",
                     "price": price,
-                    "snippet": msg.text[:250],
+                    "snippet": msg.text[:300],
                     "at": datetime.now(timezone.utc).isoformat()
                 }
 
-        # Try clicking any button that contains the keyword
+        # Try clicking button with keyword
         for msg in msgs:
             if msg.reply_markup and await click_button(msg, keyword):
                 await asyncio.sleep(2.5)
-                new_msgs = await client.get_messages(entity, limit=5)
+                new_msgs = await client.get_messages(entity, limit=6)
                 for nm in new_msgs:
                     if nm.text and keyword_lower in nm.text.lower():
                         price = extract_price(nm.text)
@@ -138,7 +152,7 @@ async def scan_source(source, keyword):
                             "username": source["username"],
                             "status": "found",
                             "price": price,
-                            "snippet": nm.text[:250],
+                            "snippet": nm.text[:300],
                             "at": datetime.now(timezone.utc).isoformat()
                         }
 
@@ -165,6 +179,12 @@ async def main():
             await client.sign_in(password=password)
 
     print("Connected. Ready.\n")
+
+    # Clear any pending old messages by marking as read
+    try:
+        await client.get_dialogs(limit=1)
+    except:
+        pass
 
     with open("sources.json") as f:
         config = json.load(f)
