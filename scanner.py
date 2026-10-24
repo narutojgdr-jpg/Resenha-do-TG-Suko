@@ -15,23 +15,22 @@ API_HASH = os.getenv("API_HASH")
 PHONE = os.getenv("PHONE")
 
 SESSION = "resenha_session"
-DELAY_BETWEEN = 8  # seconds between sources
+DELAY_BETWEEN = 6
 
 client = TelegramClient(SESSION, API_ID, API_HASH)
 
 def auto_pull():
-    """Pull latest code from GitHub before starting."""
     try:
         print("Checking for updates...")
         result = subprocess.run(["git", "pull"], capture_output=True, text=True, timeout=30)
         if result.returncode == 0:
-            if "Already up to date" in result.stdout or "Already up to date" in result.stderr:
-                print("Already up to date.")
-            else:
-                print("Updated. Restart recommended if code changed a lot.")
+            if "Already up to date" not in result.stdout and "Already up to date" not in result.stderr:
+                print("Updated.")
                 print(result.stdout.strip())
+            else:
+                print("Already up to date.")
         else:
-            print("Git pull failed (continuing with current code):", result.stderr.strip())
+            print("Git pull failed:", result.stderr.strip())
     except Exception as e:
         print("Could not auto-update:", e)
 
@@ -39,10 +38,9 @@ def extract_price(text: str):
     if not text:
         return None
     patterns = [
-        r"\$\s*([0-9]+\.?[0-9]*)",
         r"([0-9]+\.?[0-9]*)\s*USDT",
+        r"\$\s*([0-9]+\.?[0-9]*)",
         r"Price:\s*\$?([0-9]+\.?[0-9]*)",
-        r"Unit Price:\s*\$?([0-9]+\.?[0-9]*)",
         r"([0-9]+\.?[0-9]*)\s*USD",
     ]
     for p in patterns:
@@ -57,55 +55,59 @@ def extract_price(text: str):
 async def click_button(msg, text):
     if not msg or not msg.reply_markup:
         return False
-    text_lower = text.lower()
+    text_lower = text.lower().strip()
     markup = msg.reply_markup
     if not hasattr(markup, "rows"):
         return False
     for row in markup.rows:
         for btn in row.buttons:
-            if hasattr(btn, "text") and text_lower in btn.text.lower():
-                try:
-                    await msg.click(btn)
-                    return True
-                except:
-                    pass
+            if hasattr(btn, "text"):
+                btn_text = btn.text.lower().strip()
+                if text_lower in btn_text or btn_text in text_lower:
+                    try:
+                        await msg.click(btn)
+                        print(f"    Clicked button: {btn.text}")
+                        return True
+                    except Exception as e:
+                        print(f"    Click failed: {e}")
     return False
 
 async def navigate(entity, steps):
-    last_msg = None
     for step in steps:
         try:
+            print(f"  Step: {step}")
             if step.startswith("/"):
                 await client.send_message(entity, step)
             else:
-                msgs = await client.get_messages(entity, limit=3)
+                msgs = await client.get_messages(entity, limit=5)
                 clicked = False
                 for m in msgs:
                     if await click_button(m, step):
                         clicked = True
                         break
                 if not clicked:
+                    print(f"    Button not found, sending as text: {step}")
                     await client.send_message(entity, step)
             await asyncio.sleep(3)
-            msgs = await client.get_messages(entity, limit=5)
-            last_msg = msgs[0] if msgs else None
         except FloodWaitError as e:
-            print(f"FloodWait {e.seconds}s on {entity.username or entity.id}")
+            print(f"FloodWait {e.seconds}s")
             await asyncio.sleep(e.seconds + 5)
-            return None
+            return False
         except Exception as e:
             print(f"Nav error: {e}")
-            return None
-    return last_msg
+            return False
+    return True
 
 async def scan_source(source, keyword):
     try:
         entity = await client.get_entity(source["username"])
-        await navigate(entity, source.get("steps", ["/start"]))
-        await asyncio.sleep(2)
+        print(f"  Navigating {source['username']}...")
+        ok = await navigate(entity, source.get("steps", ["/start"]))
+        if not ok:
+            return {"source": source["id"], "status": "nav_failed", "price": None}
 
-        # Get more recent messages to search
-        msgs = await client.get_messages(entity, limit=8)
+        await asyncio.sleep(2)
+        msgs = await client.get_messages(entity, limit=10)
         keyword_lower = keyword.lower()
 
         for msg in msgs:
@@ -113,19 +115,21 @@ async def scan_source(source, keyword):
                 continue
             if keyword_lower in msg.text.lower():
                 price = extract_price(msg.text)
+                print(f"  Found in message: {msg.text[:80]}...")
                 return {
                     "source": source["id"],
                     "username": source["username"],
                     "status": "found",
                     "price": price,
-                    "snippet": msg.text[:200],
+                    "snippet": msg.text[:250],
                     "at": datetime.now(timezone.utc).isoformat()
                 }
 
-            # Also try clicking button if keyword matches a button
+        # Try clicking any button that contains the keyword
+        for msg in msgs:
             if msg.reply_markup and await click_button(msg, keyword):
                 await asyncio.sleep(2.5)
-                new_msgs = await client.get_messages(entity, limit=3)
+                new_msgs = await client.get_messages(entity, limit=5)
                 for nm in new_msgs:
                     if nm.text and keyword_lower in nm.text.lower():
                         price = extract_price(nm.text)
@@ -134,7 +138,7 @@ async def scan_source(source, keyword):
                             "username": source["username"],
                             "status": "found",
                             "price": price,
-                            "snippet": nm.text[:200],
+                            "snippet": nm.text[:250],
                             "at": datetime.now(timezone.utc).isoformat()
                         }
 
@@ -144,11 +148,10 @@ async def scan_source(source, keyword):
         await asyncio.sleep(e.seconds + 10)
         return {"source": source["id"], "status": "flood", "price": None}
     except Exception as e:
-        return {"source": source["id"], "status": f"error: {str(e)[:80]}", "price": None}
+        return {"source": source["id"], "status": f"error: {str(e)[:100]}", "price": None}
 
 async def main():
     auto_pull()
-
     print("Connecting...")
     await client.connect()
 
@@ -161,25 +164,23 @@ async def main():
             password = input("Please enter your password: ").strip()
             await client.sign_in(password=password)
 
-    print("Connected. Ready.")
+    print("Connected. Ready.\n")
 
     with open("sources.json") as f:
         config = json.load(f)
     sources = config.get("sources", [])
 
-    keyword = input("Keyword to search (or enter for skip): ").strip()
+    keyword = input("Keyword to search: ").strip()
     if not keyword:
         print("No keyword. Exiting.")
         return
 
     results = []
     for src in sources:
-        print(f"Checking {src['id']} ({src['username']})...")
+        print(f"\nChecking {src['id']} ({src['username']})...")
         res = await scan_source(src, keyword)
         results.append(res)
         print(f"  -> {res['status']} {res.get('price') or ''}")
-        if res.get("snippet"):
-            print(f"     {res['snippet'][:100]}...")
         await asyncio.sleep(DELAY_BETWEEN)
 
     out = {
