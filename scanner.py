@@ -2,6 +2,7 @@ import asyncio
 import json
 import os
 import re
+import subprocess
 from datetime import datetime
 from telethon import TelegramClient, events
 from telethon.tl.types import KeyboardButtonCallback, ReplyInlineMarkup
@@ -18,6 +19,22 @@ SESSION = "resenha_session"
 DELAY_BETWEEN = 8  # seconds between sources
 
 client = TelegramClient(SESSION, API_ID, API_HASH)
+
+def auto_pull():
+    """Pull latest code from GitHub before starting."""
+    try:
+        print("Checking for updates...")
+        result = subprocess.run(["git", "pull"], capture_output=True, text=True, timeout=30)
+        if result.returncode == 0:
+            if "Already up to date" in result.stdout or "Already up to date" in result.stderr:
+                print("Already up to date.")
+            else:
+                print("Updated. Restart recommended if code changed a lot.")
+                print(result.stdout.strip())
+        else:
+            print("Git pull failed (continuing with current code):", result.stderr.strip())
+    except Exception as e:
+        print("Could not auto-update:", e)
 
 def extract_price(text: str):
     if not text:
@@ -80,7 +97,6 @@ async def scan_source(source, keyword):
         if not msg or not msg.text:
             return {"source": source["id"], "status": "no_msg", "price": None}
 
-        # search for keyword in recent messages / buttons
         text = msg.text.lower()
         if keyword.lower() in text:
             price = extract_price(msg.text)
@@ -93,7 +109,6 @@ async def scan_source(source, keyword):
                 "at": datetime.utcnow().isoformat()
             }
 
-        # try clicking category that matches keyword
         if msg.reply_markup:
             clicked = await click_button(msg, keyword)
             if clicked:
@@ -119,6 +134,8 @@ async def scan_source(source, keyword):
         return {"source": source["id"], "status": f"error: {str(e)[:80]}", "price": None}
 
 async def main():
+    auto_pull()
+
     await client.start(PHONE)
     print("Connected. Ready.")
 
