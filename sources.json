@@ -1,0 +1,14 @@
+{
+  "sources": [
+    {
+      "id": "source1",
+      "username": "@tunvn2002",
+      "steps": ["/start", "Shop"]
+    },
+    {
+      "id": "source2",
+      "username": "@GPTCheap_bot",
+      "steps": ["/start", "Products"]
+    }
+  ]
+}
