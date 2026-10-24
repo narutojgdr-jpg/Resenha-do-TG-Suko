@@ -4,8 +4,7 @@ import os
 import re
 import subprocess
 from datetime import datetime
-from telethon import TelegramClient, events
-from telethon.tl.types import KeyboardButtonCallback, ReplyInlineMarkup
+from telethon import TelegramClient
 from telethon.errors import FloodWaitError
 from dotenv import load_dotenv
 
@@ -56,14 +55,20 @@ def extract_price(text: str):
     return None
 
 async def click_button(msg, text):
-    if not msg or not msg.reply_markup or not isinstance(msg.reply_markup, ReplyInlineMarkup):
+    if not msg or not msg.reply_markup:
         return False
     text_lower = text.lower()
-    for row in msg.reply_markup.rows:
+    markup = msg.reply_markup
+    if not hasattr(markup, "rows"):
+        return False
+    for row in markup.rows:
         for btn in row.buttons:
-            if isinstance(btn, KeyboardButtonCallback) and text_lower in btn.text.lower():
-                await msg.click(btn)
-                return True
+            if hasattr(btn, "text") and text_lower in btn.text.lower():
+                try:
+                    await msg.click(btn)
+                    return True
+                except:
+                    pass
     return False
 
 async def navigate(entity, steps):
