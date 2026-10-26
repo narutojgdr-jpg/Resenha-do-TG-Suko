@@ -26,16 +26,16 @@ PRESETS_FILE = "presets.json"
 SITE_URL = os.getenv("SITE_URL", "https://tempmailsuko.shop")
 SCANNER_SECRET = os.getenv("SCANNER_SECRET", "suko-scanner-2026")
 
-BG = "#13131a"
-CARD = "#1c1c24"
-PRIMARY = "#7c5cbf"
-PRIMARY_HOVER = "#6b46c1"
-ACCENT = "#2ecc71"
-MUTED = "#2a2a32"
-BORDER = "#303038"
-TEXT = "#f2f2f2"
-TEXT_MUTED = "#888"
-DANGER = "#ef4444"
+BG = "#0f0f14"
+CARD = "#1a1a22"
+PRIMARY = "#8b5cf6"
+PRIMARY_HOVER = "#7c3aed"
+ACCENT = "#22c55e"
+MUTED = "#27272f"
+BORDER = "#2e2e38"
+TEXT = "#fafafa"
+TEXT_MUTED = "#71717a"
+DANGER = "#f43f5e"
 
 def extract_price(text: str):
     if not text:
@@ -97,7 +97,7 @@ class ScannerApp:
     def __init__(self):
         self.root = tk.Tk()
         self.root.title("SuKo Scanner")
-        self.root.geometry("580x720")
+        self.root.geometry("520x680")
         self.root.configure(bg=BG)
         self.root.resizable(False, False)
         
@@ -125,84 +125,106 @@ class ScannerApp:
             pass
         
     def setup_ui(self):
-        header = tk.Frame(self.root, bg=PRIMARY, height=50)
+        # Header
+        header = tk.Frame(self.root, bg=PRIMARY, height=48)
         header.pack(fill=tk.X)
         header.pack_propagate(False)
-        
-        tk.Label(header, text="SuKo Scanner", font=("Arial", 16, "bold"), bg=PRIMARY, fg="#fff").pack(side=tk.LEFT, padx=16, pady=10)
+        tk.Label(header, text="SuKo Scanner", font=("Segoe UI", 15, "bold"), bg=PRIMARY, fg="#fff").pack(side=tk.LEFT, padx=20, pady=10)
         
         main = tk.Frame(self.root, bg=BG)
-        main.pack(fill=tk.BOTH, expand=True, padx=16, pady=12)
+        main.pack(fill=tk.BOTH, expand=True, padx=20, pady=16)
         
-        top_row = tk.Frame(main, bg=BG)
-        top_row.pack(fill=tk.X, pady=(0, 8))
+        # Top row - Keyword + Preset + Button
+        top = tk.Frame(main, bg=BG)
+        top.pack(fill=tk.X, pady=(0, 12))
         
-        tk.Label(top_row, text="Keyword", bg=BG, fg=TEXT_MUTED, font=("Arial", 9)).pack(side=tk.LEFT)
+        tk.Label(top, text="Keyword", bg=BG, fg=TEXT_MUTED, font=("Segoe UI", 9)).pack(side=tk.LEFT)
         
-        self.keyword_entry = tk.Entry(top_row, font=("Arial", 11), bg=MUTED, fg=TEXT, insertbackground=TEXT, relief=tk.FLAT, width=14)
-        self.keyword_entry.pack(side=tk.LEFT, ipady=4, padx=(8, 8))
+        self.keyword_entry = tk.Entry(top, font=("Segoe UI", 11), bg=MUTED, fg=TEXT, insertbackground=TEXT, relief=tk.FLAT, width=12, highlightthickness=1, highlightbackground=BORDER, highlightcolor=PRIMARY)
+        self.keyword_entry.pack(side=tk.LEFT, ipady=6, padx=(8, 8))
         self.keyword_entry.insert(0, "claude")
         self.keyword_entry.bind("<KeyRelease>", self.on_keyword_change)
         
         self.preset_var = tk.StringVar()
-        self.preset_combo = ttk.Combobox(top_row, textvariable=self.preset_var, width=12, state="readonly")
+        style = ttk.Style()
+        style.theme_use("clam")
+        style.configure("TCombobox", fieldbackground=MUTED, background=MUTED, foreground=TEXT, arrowcolor=TEXT)
+        self.preset_combo = ttk.Combobox(top, textvariable=self.preset_var, width=10, state="readonly")
         self.preset_combo.pack(side=tk.LEFT, padx=(0, 8))
         self.preset_combo.bind("<<ComboboxSelected>>", self.load_preset)
         self.update_preset_list()
         
-        self.start_btn = tk.Button(top_row, text="Iniciar", command=self.start_scan, bg=PRIMARY, fg="#fff", font=("Arial", 10, "bold"), relief=tk.FLAT, padx=16, pady=4, activebackground=PRIMARY_HOVER, activeforeground="#fff", cursor="hand2")
+        self.start_btn = tk.Button(top, text="Iniciar", command=self.start_scan, bg=PRIMARY, fg="#fff", font=("Segoe UI", 10, "bold"), relief=tk.FLAT, padx=18, pady=6, activebackground=PRIMARY_HOVER, activeforeground="#fff", cursor="hand2")
         self.start_btn.pack(side=tk.LEFT)
         
-        filters_card = tk.Frame(main, bg=CARD, highlightbackground=BORDER, highlightthickness=1)
-        filters_card.pack(fill=tk.X, pady=(0, 8))
+        # Filters section
+        filters = tk.Frame(main, bg=CARD, highlightbackground=BORDER, highlightthickness=1)
+        filters.pack(fill=tk.X, pady=(0, 12))
         
-        filters_inner = tk.Frame(filters_card, bg=CARD)
-        filters_inner.pack(padx=12, pady=10, fill=tk.X)
+        filters_inner = tk.Frame(filters, bg=CARD)
+        filters_inner.pack(padx=14, pady=12, fill=tk.X)
         
-        bl_frame = tk.Frame(filters_inner, bg=CARD)
-        bl_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 8))
+        # Two columns for filters
+        cols = tk.Frame(filters_inner, bg=CARD)
+        cols.pack(fill=tk.X)
         
-        tk.Label(bl_frame, text="Blacklist (excluir)", bg=CARD, fg=DANGER, font=("Arial", 9)).pack(anchor=tk.W)
-        self.blacklist_text = tk.Text(bl_frame, height=3, bg=MUTED, fg=TEXT, font=("Arial", 9), relief=tk.FLAT, wrap=tk.WORD)
-        self.blacklist_text.pack(fill=tk.X, pady=(2, 0))
+        # Blacklist column
+        bl_col = tk.Frame(cols, bg=CARD)
+        bl_col.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 8))
+        
+        bl_header = tk.Frame(bl_col, bg=CARD)
+        bl_header.pack(fill=tk.X)
+        tk.Label(bl_header, text="Blacklist", bg=CARD, fg=DANGER, font=("Segoe UI", 9, "bold")).pack(side=tk.LEFT)
+        tk.Label(bl_header, text=" excluir", bg=CARD, fg=TEXT_MUTED, font=("Segoe UI", 8)).pack(side=tk.LEFT)
+        
+        self.blacklist_text = tk.Text(bl_col, height=2, bg=MUTED, fg=TEXT, font=("Segoe UI", 10), relief=tk.FLAT, wrap=tk.WORD, highlightthickness=1, highlightbackground=BORDER, highlightcolor=DANGER)
+        self.blacklist_text.pack(fill=tk.X, pady=(4, 0))
         self.blacklist_text.insert("1.0", "API")
         
-        wl_frame = tk.Frame(filters_inner, bg=CARD)
-        wl_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        # Whitelist column
+        wl_col = tk.Frame(cols, bg=CARD)
+        wl_col.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         
-        tk.Label(wl_frame, text="Whitelist (obrigatorio)", bg=CARD, fg=ACCENT, font=("Arial", 9)).pack(anchor=tk.W)
-        self.whitelist_text = tk.Text(wl_frame, height=3, bg=MUTED, fg=TEXT, font=("Arial", 9), relief=tk.FLAT, wrap=tk.WORD)
-        self.whitelist_text.pack(fill=tk.X, pady=(2, 0))
+        wl_header = tk.Frame(wl_col, bg=CARD)
+        wl_header.pack(fill=tk.X)
+        tk.Label(wl_header, text="Whitelist", bg=CARD, fg=ACCENT, font=("Segoe UI", 9, "bold")).pack(side=tk.LEFT)
+        tk.Label(wl_header, text=" obrigatorio", bg=CARD, fg=TEXT_MUTED, font=("Segoe UI", 8)).pack(side=tk.LEFT)
         
-        btn_row = tk.Frame(filters_inner, bg=CARD)
-        btn_row.pack(fill=tk.X, pady=(8, 0))
+        self.whitelist_text = tk.Text(wl_col, height=2, bg=MUTED, fg=TEXT, font=("Segoe UI", 10), relief=tk.FLAT, wrap=tk.WORD, highlightthickness=1, highlightbackground=BORDER, highlightcolor=ACCENT)
+        self.whitelist_text.pack(fill=tk.X, pady=(4, 0))
         
-        tk.Button(btn_row, text="Salvar Preset", command=self.save_current_preset, bg=MUTED, fg=TEXT, font=("Arial", 9), relief=tk.FLAT, padx=12, pady=2, cursor="hand2").pack(side=tk.LEFT)
+        # Bottom row
+        bottom = tk.Frame(filters_inner, bg=CARD)
+        bottom.pack(fill=tk.X, pady=(10, 0))
         
-        tk.Label(btn_row, text="Separe por virgula", bg=CARD, fg=TEXT_MUTED, font=("Arial", 8)).pack(side=tk.RIGHT)
+        tk.Button(bottom, text="Salvar Preset", command=self.save_current_preset, bg=MUTED, fg=TEXT, font=("Segoe UI", 9), relief=tk.FLAT, padx=14, pady=4, cursor="hand2", activebackground=BORDER, activeforeground=TEXT).pack(side=tk.LEFT)
+        tk.Label(bottom, text="Separe por virgula", bg=CARD, fg=TEXT_MUTED, font=("Segoe UI", 8)).pack(side=tk.RIGHT)
         
-        self.status_label = tk.Label(main, text="Pronto", bg=BG, fg=ACCENT, font=("Arial", 10))
-        self.status_label.pack(anchor=tk.W, pady=(0, 4))
+        # Status + Progress
+        status_row = tk.Frame(main, bg=BG)
+        status_row.pack(fill=tk.X, pady=(0, 6))
         
-        style = ttk.Style()
-        style.theme_use("clam")
-        style.configure("Custom.Horizontal.TProgressbar", troughcolor=MUTED, background=PRIMARY, thickness=6, borderwidth=0)
+        self.status_label = tk.Label(status_row, text="Pronto", bg=BG, fg=ACCENT, font=("Segoe UI", 10))
+        self.status_label.pack(side=tk.LEFT)
         
-        self.progress = ttk.Progressbar(main, length=548, mode="determinate", style="Custom.Horizontal.TProgressbar")
-        self.progress.pack(pady=(0, 8))
+        style.configure("Custom.Horizontal.TProgressbar", troughcolor=MUTED, background=PRIMARY, thickness=4, borderwidth=0)
+        self.progress = ttk.Progressbar(main, length=480, mode="determinate", style="Custom.Horizontal.TProgressbar")
+        self.progress.pack(pady=(0, 10))
         
-        results_card = tk.Frame(main, bg=CARD, highlightbackground=BORDER, highlightthickness=1)
-        results_card.pack(fill=tk.BOTH, expand=True)
+        # Results
+        results = tk.Frame(main, bg=CARD, highlightbackground=BORDER, highlightthickness=1)
+        results.pack(fill=tk.BOTH, expand=True)
         
-        tk.Label(results_card, text="Resultados", bg=CARD, fg=TEXT_MUTED, font=("Arial", 9)).pack(anchor=tk.W, padx=12, pady=(8, 2))
+        tk.Label(results, text="Resultados", bg=CARD, fg=TEXT_MUTED, font=("Segoe UI", 9)).pack(anchor=tk.W, padx=14, pady=(10, 4))
         
-        self.log = tk.Text(results_card, height=16, bg=CARD, fg=TEXT, font=("Arial", 9), relief=tk.FLAT, state=tk.DISABLED, wrap=tk.WORD, padx=8, pady=4)
-        self.log.pack(fill=tk.BOTH, expand=True, padx=4, pady=(0, 6))
+        self.log = tk.Text(results, height=14, bg=CARD, fg=TEXT, font=("Segoe UI", 9), relief=tk.FLAT, state=tk.DISABLED, wrap=tk.WORD, padx=10, pady=4)
+        self.log.pack(fill=tk.BOTH, expand=True, padx=4, pady=(0, 8))
         
+        # Footer
         footer = tk.Frame(self.root, bg=BG)
-        footer.pack(fill=tk.X, padx=16, pady=(0, 10))
+        footer.pack(fill=tk.X, padx=20, pady=(0, 12))
         
-        self.count_label = tk.Label(footer, text="", bg=BG, fg=TEXT_MUTED, font=("Arial", 9))
+        self.count_label = tk.Label(footer, text="", bg=BG, fg=TEXT_MUTED, font=("Segoe UI", 9))
         self.count_label.pack(side=tk.LEFT)
         
     def update_preset_list(self):
