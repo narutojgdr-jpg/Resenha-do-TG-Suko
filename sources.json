@@ -7,8 +7,8 @@
     },
     {
       "id": "source2",
-      "username": "@GPTCheap_bot",
-      "steps": ["/start", "Products"]
+      "username": "@GPTCheapChat_bot",
+      "steps": ["/start"]
     }
   ]
 }
