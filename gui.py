@@ -97,7 +97,7 @@ class ScannerApp:
     def __init__(self):
         self.root = tk.Tk()
         self.root.title("SuKo Scanner")
-        self.root.geometry("520x680")
+        self.root.geometry("480x700")
         self.root.configure(bg=BG)
         self.root.resizable(False, False)
         
@@ -125,7 +125,6 @@ class ScannerApp:
             pass
         
     def setup_ui(self):
-        # Header
         header = tk.Frame(self.root, bg=PRIMARY, height=48)
         header.pack(fill=tk.X)
         header.pack_propagate(False)
@@ -134,7 +133,7 @@ class ScannerApp:
         main = tk.Frame(self.root, bg=BG)
         main.pack(fill=tk.BOTH, expand=True, padx=20, pady=16)
         
-        # Top row - Keyword + Preset + Button
+        # Top row
         top = tk.Frame(main, bg=BG)
         top.pack(fill=tk.X, pady=(0, 12))
         
@@ -157,58 +156,45 @@ class ScannerApp:
         self.start_btn = tk.Button(top, text="Iniciar", command=self.start_scan, bg=PRIMARY, fg="#fff", font=("Segoe UI", 10, "bold"), relief=tk.FLAT, padx=18, pady=6, activebackground=PRIMARY_HOVER, activeforeground="#fff", cursor="hand2")
         self.start_btn.pack(side=tk.LEFT)
         
-        # Filters section
+        # Filters card
         filters = tk.Frame(main, bg=CARD, highlightbackground=BORDER, highlightthickness=1)
         filters.pack(fill=tk.X, pady=(0, 12))
         
         filters_inner = tk.Frame(filters, bg=CARD)
         filters_inner.pack(padx=14, pady=12, fill=tk.X)
         
-        # Two columns for filters
-        cols = tk.Frame(filters_inner, bg=CARD)
-        cols.pack(fill=tk.X)
-        
-        # Blacklist column
-        bl_col = tk.Frame(cols, bg=CARD)
-        bl_col.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 8))
-        
-        bl_header = tk.Frame(bl_col, bg=CARD)
+        # Blacklist
+        bl_header = tk.Frame(filters_inner, bg=CARD)
         bl_header.pack(fill=tk.X)
         tk.Label(bl_header, text="Blacklist", bg=CARD, fg=DANGER, font=("Segoe UI", 9, "bold")).pack(side=tk.LEFT)
-        tk.Label(bl_header, text=" excluir", bg=CARD, fg=TEXT_MUTED, font=("Segoe UI", 8)).pack(side=tk.LEFT)
+        tk.Label(bl_header, text="  excluir produtos com essas palavras", bg=CARD, fg=TEXT_MUTED, font=("Segoe UI", 8)).pack(side=tk.LEFT)
         
-        self.blacklist_text = tk.Text(bl_col, height=2, bg=MUTED, fg=TEXT, font=("Segoe UI", 10), relief=tk.FLAT, wrap=tk.WORD, highlightthickness=1, highlightbackground=BORDER, highlightcolor=DANGER)
-        self.blacklist_text.pack(fill=tk.X, pady=(4, 0))
+        self.blacklist_text = tk.Text(filters_inner, height=2, bg=MUTED, fg=TEXT, font=("Segoe UI", 10), relief=tk.FLAT, wrap=tk.WORD, highlightthickness=1, highlightbackground=BORDER, highlightcolor=DANGER)
+        self.blacklist_text.pack(fill=tk.X, pady=(4, 10))
         self.blacklist_text.insert("1.0", "API")
         
-        # Whitelist column
-        wl_col = tk.Frame(cols, bg=CARD)
-        wl_col.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        
-        wl_header = tk.Frame(wl_col, bg=CARD)
+        # Whitelist
+        wl_header = tk.Frame(filters_inner, bg=CARD)
         wl_header.pack(fill=tk.X)
         tk.Label(wl_header, text="Whitelist", bg=CARD, fg=ACCENT, font=("Segoe UI", 9, "bold")).pack(side=tk.LEFT)
-        tk.Label(wl_header, text=" obrigatorio", bg=CARD, fg=TEXT_MUTED, font=("Segoe UI", 8)).pack(side=tk.LEFT)
+        tk.Label(wl_header, text="  so aceitar produtos com essas palavras", bg=CARD, fg=TEXT_MUTED, font=("Segoe UI", 8)).pack(side=tk.LEFT)
         
-        self.whitelist_text = tk.Text(wl_col, height=2, bg=MUTED, fg=TEXT, font=("Segoe UI", 10), relief=tk.FLAT, wrap=tk.WORD, highlightthickness=1, highlightbackground=BORDER, highlightcolor=ACCENT)
-        self.whitelist_text.pack(fill=tk.X, pady=(4, 0))
+        self.whitelist_text = tk.Text(filters_inner, height=2, bg=MUTED, fg=TEXT, font=("Segoe UI", 10), relief=tk.FLAT, wrap=tk.WORD, highlightthickness=1, highlightbackground=BORDER, highlightcolor=ACCENT)
+        self.whitelist_text.pack(fill=tk.X, pady=(4, 10))
         
         # Bottom row
         bottom = tk.Frame(filters_inner, bg=CARD)
-        bottom.pack(fill=tk.X, pady=(10, 0))
+        bottom.pack(fill=tk.X)
         
         tk.Button(bottom, text="Salvar Preset", command=self.save_current_preset, bg=MUTED, fg=TEXT, font=("Segoe UI", 9), relief=tk.FLAT, padx=14, pady=4, cursor="hand2", activebackground=BORDER, activeforeground=TEXT).pack(side=tk.LEFT)
         tk.Label(bottom, text="Separe por virgula", bg=CARD, fg=TEXT_MUTED, font=("Segoe UI", 8)).pack(side=tk.RIGHT)
         
         # Status + Progress
-        status_row = tk.Frame(main, bg=BG)
-        status_row.pack(fill=tk.X, pady=(0, 6))
-        
-        self.status_label = tk.Label(status_row, text="Pronto", bg=BG, fg=ACCENT, font=("Segoe UI", 10))
-        self.status_label.pack(side=tk.LEFT)
+        self.status_label = tk.Label(main, text="Pronto", bg=BG, fg=ACCENT, font=("Segoe UI", 10))
+        self.status_label.pack(anchor=tk.W, pady=(0, 6))
         
         style.configure("Custom.Horizontal.TProgressbar", troughcolor=MUTED, background=PRIMARY, thickness=4, borderwidth=0)
-        self.progress = ttk.Progressbar(main, length=480, mode="determinate", style="Custom.Horizontal.TProgressbar")
+        self.progress = ttk.Progressbar(main, length=440, mode="determinate", style="Custom.Horizontal.TProgressbar")
         self.progress.pack(pady=(0, 10))
         
         # Results
@@ -217,7 +203,7 @@ class ScannerApp:
         
         tk.Label(results, text="Resultados", bg=CARD, fg=TEXT_MUTED, font=("Segoe UI", 9)).pack(anchor=tk.W, padx=14, pady=(10, 4))
         
-        self.log = tk.Text(results, height=14, bg=CARD, fg=TEXT, font=("Segoe UI", 9), relief=tk.FLAT, state=tk.DISABLED, wrap=tk.WORD, padx=10, pady=4)
+        self.log = tk.Text(results, height=12, bg=CARD, fg=TEXT, font=("Segoe UI", 9), relief=tk.FLAT, state=tk.DISABLED, wrap=tk.WORD, padx=10, pady=4)
         self.log.pack(fill=tk.BOTH, expand=True, padx=4, pady=(0, 8))
         
         # Footer
