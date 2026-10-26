@@ -21,12 +21,12 @@ PHONE = os.getenv("PHONE")
 SESSION = "resenha_session"
 DELAY_BETWEEN = 1.5
 FOLDER_NAME = "LOJAS"
-TIMEOUT_PER_BOT = 25  # seconds max per bot
+TIMEOUT_PER_BOT = 22
 
-PRODUCT_BUTTONS = [
+# General navigation buttons (safe to click)
+NAV_BUTTONS = [
     "Browse Products", "Browse", "Products", "Shop", "Buy", "Menu",
-    "Store", "Catalog", "Services", "Premium", "AI", "Gemini",
-    "ChatGPT", "Claude", "GPT"
+    "Store", "Catalog", "Services"
 ]
 
 client = TelegramClient(SESSION, API_ID, API_HASH)
@@ -82,23 +82,60 @@ def clean_text(text):
     cleaned = re.sub(r'[^a-zA-Z0-9\s]', '', text)
     return cleaned.lower().strip()
 
-async def click_any_button(msg, keywords):
+def is_wrong_product(btn_text, keyword):
+    """Avoid clicking buttons for other products when searching for a specific one."""
+    low = btn_text.lower()
+    kw = keyword.lower()
+    # If the button clearly mentions another major product, skip it
+    others = ["claude", "chatgpt", "gpt", "openai", "capcut", "netflix", "spotify"]
+    for o in others:
+        if o in low and kw not in low and o != kw:
+            return True
+    return False
+
+async def click_best_button(msg, keyword):
+    """Click the best matching button: prefer keyword, then nav buttons, skip wrong products."""
     if not msg or not msg.reply_markup or not hasattr(msg.reply_markup, "rows"):
         return False
+
     markup = msg.reply_markup
+    candidates = []
+
     for i, row in enumerate(markup.rows):
         for j, btn in enumerate(row.buttons):
             if not hasattr(btn, "text"):
                 continue
-            btn_clean = clean_text(btn.text)
-            for kw in keywords:
-                if clean_text(kw) in btn_clean or btn_clean in clean_text(kw):
-                    try:
-                        await msg.click(i, j)
-                        return True
-                    except Exception:
-                        pass
-    return False
+            btn_text = btn.text
+            btn_clean = clean_text(btn_text)
+
+            # Skip if it's clearly another product
+            if is_wrong_product(btn_text, keyword):
+                continue
+
+            score = 0
+            # High priority: contains the keyword
+            if keyword.lower() in btn_clean:
+                score = 10
+            # Medium: navigation button
+            elif any(clean_text(nb) in btn_clean for nb in NAV_BUTTONS):
+                score = 5
+            else:
+                continue
+
+            candidates.append((score, i, j, btn_text))
+
+    if not candidates:
+        return False
+
+    # Pick the highest score
+    candidates.sort(key=lambda x: x[0], reverse=True)
+    _, i, j, btn_text = candidates[0]
+    try:
+        await msg.click(i, j)
+        print(f"    Clicked: {btn_text}")
+        return True
+    except Exception:
+        return False
 
 async def try_find_with_price(entity, keyword):
     await asyncio.sleep(1)
@@ -201,24 +238,26 @@ async def explore_bot(entity, keyword):
     except:
         return "dead"
 
-    for attempt in range(2):
+    # Try clicking best buttons (prefer keyword)
+    for attempt in range(3):
         try:
-            msgs = await asyncio.wait_for(client.get_messages(entity, limit=5), timeout=6)
+            msgs = await asyncio.wait_for(client.get_messages(entity, limit=6), timeout=6)
             clicked = False
             for m in msgs:
-                if await click_any_button(m, PRODUCT_BUTTONS + [keyword]):
+                if await click_best_button(m, keyword):
                     clicked = True
                     break
             if clicked:
                 res = await try_find_with_price(entity, keyword)
                 if res:
                     return res
-                await asyncio.sleep(1)
+                await asyncio.sleep(1.2)
             else:
                 break
         except:
             break
 
+    # Fallback commands
     for cmd in ["/shop", "/products"]:
         try:
             await asyncio.wait_for(client.send_message(entity, cmd), timeout=6)
@@ -236,7 +275,6 @@ async def scan_bot(username, keyword):
         entity = await asyncio.wait_for(client.get_entity(username), timeout=8)
         result = await asyncio.wait_for(explore_bot(entity, keyword), timeout=TIMEOUT_PER_BOT)
 
-        # Clean in background-ish, don't wait forever
         try:
             await asyncio.wait_for(clean_chat(entity), timeout=5)
         except:
@@ -333,7 +371,7 @@ async def main():
         await asyncio.wait_for(client.catch_up(), timeout=10)
         await asyncio.sleep(1)
     except:
-        print("Sync skipped (timeout or error)")
+        print("Sync skipped")
 
     lojas_bots = await get_lojas_bots()
     if not lojas_bots:
