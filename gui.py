@@ -133,7 +133,6 @@ class ScannerApp:
         main = tk.Frame(self.root, bg=BG)
         main.pack(fill=tk.BOTH, expand=True, padx=20, pady=16)
         
-        # Top row
         top = tk.Frame(main, bg=BG)
         top.pack(fill=tk.X, pady=(0, 12))
         
@@ -156,14 +155,12 @@ class ScannerApp:
         self.start_btn = tk.Button(top, text="Iniciar", command=self.start_scan, bg=PRIMARY, fg="#fff", font=("Segoe UI", 10, "bold"), relief=tk.FLAT, padx=18, pady=6, activebackground=PRIMARY_HOVER, activeforeground="#fff", cursor="hand2")
         self.start_btn.pack(side=tk.LEFT)
         
-        # Filters card
         filters = tk.Frame(main, bg=CARD, highlightbackground=BORDER, highlightthickness=1)
         filters.pack(fill=tk.X, pady=(0, 12))
         
         filters_inner = tk.Frame(filters, bg=CARD)
         filters_inner.pack(padx=14, pady=12, fill=tk.X)
         
-        # Blacklist
         bl_header = tk.Frame(filters_inner, bg=CARD)
         bl_header.pack(fill=tk.X)
         tk.Label(bl_header, text="Blacklist", bg=CARD, fg=DANGER, font=("Segoe UI", 9, "bold")).pack(side=tk.LEFT)
@@ -173,7 +170,6 @@ class ScannerApp:
         self.blacklist_text.pack(fill=tk.X, pady=(4, 10))
         self.blacklist_text.insert("1.0", "API")
         
-        # Whitelist
         wl_header = tk.Frame(filters_inner, bg=CARD)
         wl_header.pack(fill=tk.X)
         tk.Label(wl_header, text="Whitelist", bg=CARD, fg=ACCENT, font=("Segoe UI", 9, "bold")).pack(side=tk.LEFT)
@@ -182,14 +178,12 @@ class ScannerApp:
         self.whitelist_text = tk.Text(filters_inner, height=2, bg=MUTED, fg=TEXT, font=("Segoe UI", 10), relief=tk.FLAT, wrap=tk.WORD, highlightthickness=1, highlightbackground=BORDER, highlightcolor=ACCENT)
         self.whitelist_text.pack(fill=tk.X, pady=(4, 10))
         
-        # Bottom row
         bottom = tk.Frame(filters_inner, bg=CARD)
         bottom.pack(fill=tk.X)
         
         tk.Button(bottom, text="Salvar Preset", command=self.save_current_preset, bg=MUTED, fg=TEXT, font=("Segoe UI", 9), relief=tk.FLAT, padx=14, pady=4, cursor="hand2", activebackground=BORDER, activeforeground=TEXT).pack(side=tk.LEFT)
         tk.Label(bottom, text="Separe por virgula", bg=CARD, fg=TEXT_MUTED, font=("Segoe UI", 8)).pack(side=tk.RIGHT)
         
-        # Status + Progress
         self.status_label = tk.Label(main, text="Pronto", bg=BG, fg=ACCENT, font=("Segoe UI", 10))
         self.status_label.pack(anchor=tk.W, pady=(0, 6))
         
@@ -197,7 +191,6 @@ class ScannerApp:
         self.progress = ttk.Progressbar(main, length=440, mode="determinate", style="Custom.Horizontal.TProgressbar")
         self.progress.pack(pady=(0, 10))
         
-        # Results
         results = tk.Frame(main, bg=CARD, highlightbackground=BORDER, highlightthickness=1)
         results.pack(fill=tk.BOTH, expand=True)
         
@@ -206,7 +199,6 @@ class ScannerApp:
         self.log = tk.Text(results, height=12, bg=CARD, fg=TEXT, font=("Segoe UI", 9), relief=tk.FLAT, state=tk.DISABLED, wrap=tk.WORD, padx=10, pady=4)
         self.log.pack(fill=tk.BOTH, expand=True, padx=4, pady=(0, 8))
         
-        # Footer
         footer = tk.Frame(self.root, bg=BG)
         footer.pack(fill=tk.X, padx=20, pady=(0, 12))
         
@@ -379,6 +371,19 @@ class ScannerApp:
         except:
             pass
         return bots
+    
+    async def cleanup_messages(self, entity, keep_latest=1):
+        try:
+            me = await self.client.get_me()
+            msgs_to_delete = []
+            async for msg in self.client.iter_messages(entity, from_user=me, limit=20):
+                if msg.out:
+                    msgs_to_delete.append(msg.id)
+            if len(msgs_to_delete) > keep_latest:
+                to_delete = msgs_to_delete[keep_latest:]
+                await self.client.delete_messages(entity, to_delete)
+        except:
+            pass
         
     async def scan_bot(self, username, keyword, blacklist, whitelist):
         products = []
@@ -451,6 +456,8 @@ class ScannerApp:
                             break
                 except:
                     pass
+            
+            await self.cleanup_messages(entity, keep_latest=1)
                     
         except:
             pass
