@@ -5,9 +5,7 @@ import re
 import threading
 import tkinter as tk
 from tkinter import ttk
-from datetime import datetime, timezone
 from telethon import TelegramClient, functions, types
-from telethon.errors import FloodWaitError, SessionPasswordNeededError
 from dotenv import load_dotenv
 import urllib.request
 import logging
@@ -27,7 +25,6 @@ FOLDER_NAME = "LOJAS"
 SITE_URL = os.getenv("SITE_URL", "https://tempmailsuko.shop")
 SCANNER_SECRET = os.getenv("SCANNER_SECRET", "suko-scanner-2026")
 
-# Colors matching the site
 BG = "#13131a"
 CARD = "#1c1c24"
 PRIMARY = "#7c5cbf"
@@ -74,9 +71,6 @@ class ScannerApp:
         self.root.configure(bg=BG)
         self.root.resizable(False, False)
         
-        # Remove window border decorations feel
-        self.root.option_add("*Font", "Segoe UI 10")
-        
         self.client = None
         self.scanning = False
         self.results = []
@@ -84,41 +78,36 @@ class ScannerApp:
         self.setup_ui()
         
     def setup_ui(self):
-        # Header bar
         header = tk.Frame(self.root, bg=PRIMARY, height=50)
         header.pack(fill=tk.X)
         header.pack_propagate(False)
         
-        tk.Label(header, text="SuKo Scanner", font=("Segoe UI", 16, "bold"), bg=PRIMARY, fg="#fff").pack(side=tk.LEFT, padx=16, pady=10)
+        tk.Label(header, text="SuKo Scanner", font=("Arial", 16, "bold"), bg=PRIMARY, fg="#fff").pack(side=tk.LEFT, padx=16, pady=10)
         
-        # Main content
         main = tk.Frame(self.root, bg=BG)
         main.pack(fill=tk.BOTH, expand=True, padx=16, pady=16)
         
-        # Input card
         input_card = tk.Frame(main, bg=CARD, highlightbackground=BORDER, highlightthickness=1)
         input_card.pack(fill=tk.X, pady=(0, 12))
         
         inner = tk.Frame(input_card, bg=CARD)
         inner.pack(padx=14, pady=14)
         
-        tk.Label(inner, text="Keyword", bg=CARD, fg=TEXT_MUTED, font=("Segoe UI", 9)).pack(anchor=tk.W)
+        tk.Label(inner, text="Keyword", bg=CARD, fg=TEXT_MUTED, font=("Arial", 9)).pack(anchor=tk.W)
         
         row = tk.Frame(inner, bg=CARD)
         row.pack(fill=tk.X, pady=(4, 0))
         
-        self.keyword_entry = tk.Entry(row, font=("Segoe UI", 12), bg=MUTED, fg=TEXT, insertbackground=TEXT, relief=tk.FLAT, width=22)
+        self.keyword_entry = tk.Entry(row, font=("Arial", 12), bg=MUTED, fg=TEXT, insertbackground=TEXT, relief=tk.FLAT, width=22)
         self.keyword_entry.pack(side=tk.LEFT, ipady=6, padx=(0, 8))
         self.keyword_entry.insert(0, "gemini")
         
-        self.start_btn = tk.Button(row, text="Iniciar", command=self.start_scan, bg=PRIMARY, fg="#fff", font=("Segoe UI", 10, "bold"), relief=tk.FLAT, padx=20, pady=6, activebackground=PRIMARY_HOVER, activeforeground="#fff", cursor="hand2")
+        self.start_btn = tk.Button(row, text="Iniciar", command=self.start_scan, bg=PRIMARY, fg="#fff", font=("Arial", 10, "bold"), relief=tk.FLAT, padx=20, pady=6, activebackground=PRIMARY_HOVER, activeforeground="#fff", cursor="hand2")
         self.start_btn.pack(side=tk.LEFT)
         
-        # Status
-        self.status_label = tk.Label(main, text="Pronto", bg=BG, fg=ACCENT, font=("Segoe UI", 10))
+        self.status_label = tk.Label(main, text="Pronto", bg=BG, fg=ACCENT, font=("Arial", 10))
         self.status_label.pack(anchor=tk.W, pady=(0, 6))
         
-        # Progress
         style = ttk.Style()
         style.theme_use("clam")
         style.configure("Custom.Horizontal.TProgressbar", troughcolor=MUTED, background=PRIMARY, thickness=8, borderwidth=0)
@@ -126,20 +115,18 @@ class ScannerApp:
         self.progress = ttk.Progressbar(main, length=488, mode="determinate", style="Custom.Horizontal.TProgressbar")
         self.progress.pack(pady=(0, 12))
         
-        # Results card
         results_card = tk.Frame(main, bg=CARD, highlightbackground=BORDER, highlightthickness=1)
         results_card.pack(fill=tk.BOTH, expand=True)
         
-        tk.Label(results_card, text="Resultados", bg=CARD, fg=TEXT_MUTED, font=("Segoe UI", 9)).pack(anchor=tk.W, padx=14, pady=(10, 4))
+        tk.Label(results_card, text="Resultados", bg=CARD, fg=TEXT_MUTED, font=("Arial", 9)).pack(anchor=tk.W, padx=14, pady=(10, 4))
         
-        self.log = tk.Text(results_card, height=18, bg=CARD, fg=TEXT, font=("Segoe UI", 10), relief=tk.FLAT, state=tk.DISABLED, wrap=tk.WORD, padx=10, pady=4)
+        self.log = tk.Text(results_card, height=18, bg=CARD, fg=TEXT, font=("Arial", 10), relief=tk.FLAT, state=tk.DISABLED, wrap=tk.WORD, padx=10, pady=4)
         self.log.pack(fill=tk.BOTH, expand=True, padx=4, pady=(0, 8))
         
-        # Footer
         footer = tk.Frame(self.root, bg=BG)
         footer.pack(fill=tk.X, padx=16, pady=(0, 12))
         
-        self.count_label = tk.Label(footer, text="", bg=BG, fg=TEXT_MUTED, font=("Segoe UI", 9))
+        self.count_label = tk.Label(footer, text="", bg=BG, fg=TEXT_MUTED, font=("Arial", 9))
         self.count_label.pack(side=tk.LEFT)
         
     def log_msg(self, msg, color=None):
@@ -207,7 +194,6 @@ class ScannerApp:
         self.root.after(0, lambda: self.log_msg(f"Encontrados {total} bots", TEXT_MUTED))
         self.root.after(0, lambda: self.log_msg(""))
         
-        found = 0
         for i, username in enumerate(bots):
             self.root.after(0, lambda i=i, u=username, t=total: self.set_status(f"[{i+1}/{t}] {u}", PRIMARY))
             self.root.after(0, lambda i=i: self.progress.config(value=i+1))
@@ -217,7 +203,6 @@ class ScannerApp:
             
             price = res.get("price")
             if price:
-                found += 1
                 oos = res.get("out_of_stock")
                 color = DANGER if oos else ACCENT
                 status = " (sem estoque)" if oos else ""
@@ -236,7 +221,7 @@ class ScannerApp:
         
         if valid:
             avg = sum(r["price"] for r in valid) / len(valid)
-            self.root.after(0, lambda a=avg, n=len(valid): self.count_label.config(text=f"{n} encontrados  ·  media ${a:.2f}"))
+            self.root.after(0, lambda a=avg, n=len(valid): self.count_label.config(text=f"{n} encontrados  -  media ${a:.2f}"))
             
         await self.client.disconnect()
         
