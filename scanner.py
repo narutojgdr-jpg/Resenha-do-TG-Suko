@@ -3,10 +3,14 @@ import json
 import os
 import re
 import subprocess
+import logging
 from datetime import datetime, timezone
 from telethon import TelegramClient, functions, types
 from telethon.errors import FloodWaitError, SessionPasswordNeededError
 from dotenv import load_dotenv
+
+# Reduce Telethon noise
+logging.getLogger("telethon").setLevel(logging.WARNING)
 
 load_dotenv()
 
@@ -15,7 +19,7 @@ API_HASH = os.getenv("API_HASH")
 PHONE = os.getenv("PHONE")
 
 SESSION = "resenha_session"
-DELAY_BETWEEN = 4
+DELAY_BETWEEN = 3
 FOLDER_NAME = "LOJAS"
 
 client = TelegramClient(SESSION, API_ID, API_HASH)
@@ -78,7 +82,7 @@ async def click_button(msg, text):
 
     try:
         await msg.click(text=text)
-        print(f"    Clicked by text: {text}")
+        print(f"    Clicked: {text}")
         return True
     except Exception:
         pass
@@ -90,10 +94,10 @@ async def click_button(msg, text):
                 if target in btn_clean or btn_clean in target:
                     try:
                         await msg.click(i, j)
-                        print(f"    Clicked by index: {btn.text}")
+                        print(f"    Clicked: {btn.text}")
                         return True
-                    except Exception as e:
-                        print(f"    Click error: {e}")
+                    except Exception:
+                        pass
     return False
 
 async def navigate(entity, steps):
@@ -101,27 +105,25 @@ async def navigate(entity, steps):
         try:
             print(f"  Step: {step}")
             if step.startswith("/"):
-                sent = await client.send_message(entity, step)
-                print(f"    Sent: {step} (id={sent.id})")
-                await asyncio.sleep(3.5)
+                await client.send_message(entity, step)
+                await asyncio.sleep(3)
             else:
                 found = False
                 for attempt in range(3):
-                    msgs = await client.get_messages(entity, limit=8)
+                    msgs = await client.get_messages(entity, limit=6)
                     for m in msgs:
                         if m.reply_markup and await click_button(m, step):
                             found = True
                             break
                     if found:
                         break
-                    await asyncio.sleep(1.5)
+                    await asyncio.sleep(1.2)
                 if not found:
-                    print(f"    Button '{step}' not found, sending as text")
                     await client.send_message(entity, step)
-                await asyncio.sleep(3.5)
+                await asyncio.sleep(3)
         except FloodWaitError as e:
             print(f"FloodWait {e.seconds}s")
-            await asyncio.sleep(e.seconds + 5)
+            await asyncio.sleep(e.seconds + 3)
             return False
         except Exception as e:
             print(f"Nav error: {e}")
@@ -130,7 +132,7 @@ async def navigate(entity, steps):
 
 async def get_last_restock(entity, keyword):
     try:
-        msgs = await client.get_messages(entity, limit=25)
+        msgs = await client.get_messages(entity, limit=20)
         keyword_lower = keyword.lower()
         for msg in msgs:
             if not msg.text or not msg.date:
@@ -152,8 +154,8 @@ async def scan_bot(username, keyword, steps=None):
         if not ok:
             return {"username": username, "status": "nav_failed", "price": None}
 
-        await asyncio.sleep(2)
-        msgs = await client.get_messages(entity, limit=12)
+        await asyncio.sleep(1.5)
+        msgs = await client.get_messages(entity, limit=10)
         keyword_lower = keyword.lower()
 
         for msg in msgs:
@@ -165,27 +167,30 @@ async def scan_bot(username, keyword, steps=None):
                 last_restock = await get_last_restock(entity, keyword)
 
                 status = "out_of_stock" if out_of_stock else "found"
-                print(f"  Found: {msg.text[:100]}...")
+                print(f"  Found: {msg.text[:90]}...")
                 return {
                     "username": username,
                     "status": status,
                     "price": price,
                     "out_of_stock": out_of_stock,
                     "last_restock": last_restock,
-                    "snippet": msg.text[:300],
+                    "snippet": msg.text[:250],
                     "at": datetime.now(timezone.utc).isoformat()
                 }
 
         return {"username": username, "status": "not_found", "price": None}
     except FloodWaitError as e:
         print(f"FloodWait {e.seconds}s")
-        await asyncio.sleep(e.seconds + 10)
+        await asyncio.sleep(e.seconds + 5)
         return {"username": username, "status": "flood", "price": None}
     except Exception as e:
-        return {"username": username, "status": f"error: {str(e)[:80]}", "price": None}
+        err = str(e)
+        if "Security error" in err or "old message" in err.lower():
+            print(f"  Skipping {username} (old message flood)")
+            return {"username": username, "status": "skipped_flood", "price": None}
+        return {"username": username, "status": f"error: {err[:60]}", "price": None}
 
 async def get_lojas_bots():
-    """Return list of @usernames of bots inside the LOJAS folder."""
     bots = []
     try:
         result = await client(functions.messages.GetDialogFiltersRequest())
@@ -203,8 +208,8 @@ async def get_lojas_bots():
                                 uname = "@" + entity.username
                                 if uname not in bots:
                                     bots.append(uname)
-                        except Exception as e:
-                            print(f"  Could not resolve peer: {e}")
+                        except Exception:
+                            pass
                     break
     except Exception as e:
         print(f"Could not read folders: {e}")
@@ -226,19 +231,22 @@ async def main():
 
     print("Connected. Ready.\n")
 
+    # Try to reduce the flood by marking dialogs as read
+    try:
+        print("Clearing pending updates...")
+        await client.get_dialogs(limit=5)
+        await asyncio.sleep(1)
+    except:
+        pass
+
     lojas_bots = await get_lojas_bots()
     if not lojas_bots:
         print(f"No bots found in '{FOLDER_NAME}' folder.")
-        print("Make sure the folder name is exactly 'LOJAS' and the bots are inside it.")
         await client.disconnect()
         return
 
-    print(f"Found {len(lojas_bots)} bots in '{FOLDER_NAME}':")
-    for b in lojas_bots:
-        print(f"  - {b}")
-    print()
+    print(f"Found {len(lojas_bots)} bots in '{FOLDER_NAME}'.\n")
 
-    # Load optional custom steps from sources.json (if the bot is listed there)
     custom_steps = {}
     try:
         with open("sources.json", encoding="utf-8") as f:
@@ -254,9 +262,9 @@ async def main():
         return
 
     results = []
-    for username in lojas_bots:
+    for i, username in enumerate(lojas_bots, 1):
         steps = custom_steps.get(username, ["/start"])
-        print(f"\nChecking {username}...")
+        print(f"\n[{i}/{len(lojas_bots)}] Checking {username}...")
         res = await scan_bot(username, keyword, steps)
         results.append(res)
         status_extra = ""
