@@ -65,15 +65,24 @@ async def click_button(msg, text):
     markup = msg.reply_markup
     if not hasattr(markup, "rows"):
         return False
-    for row in markup.rows:
-        for btn in row.buttons:
+    
+    # Try clicking by text first (Telethon supports this)
+    try:
+        await msg.click(text=text)
+        print(f"    Clicked by text: {text}")
+        return True
+    except Exception:
+        pass
+
+    # Fallback: find position and click by index
+    for i, row in enumerate(markup.rows):
+        for j, btn in enumerate(row.buttons):
             if hasattr(btn, "text"):
                 btn_clean = clean_text(btn.text)
-                print(f"      Button seen: '{btn.text}' -> '{btn_clean}'")
                 if target in btn_clean or btn_clean in target:
                     try:
-                        await msg.click(btn)
-                        print(f"    Clicked: {btn.text}")
+                        await msg.click(i, j)
+                        print(f"    Clicked by index: {btn.text}")
                         return True
                     except Exception as e:
                         print(f"    Click error: {e}")
@@ -181,7 +190,7 @@ async def main():
 
     print("Connected. Ready.\n")
 
-    with open("sources.json") as f:
+    with open("sources.json", encoding="utf-8") as f:
         config = json.load(f)
     sources = config.get("sources", [])
 
@@ -203,7 +212,7 @@ async def main():
         "scanned_at": datetime.now(timezone.utc).isoformat(),
         "results": results
     }
-    with open("last_scan.json", "w") as f:
+    with open("last_scan.json", "w", encoding="utf-8") as f:
         json.dump(out, f, indent=2, ensure_ascii=False)
 
     valid = [r for r in results if r.get("price")]
