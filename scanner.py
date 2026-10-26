@@ -19,8 +19,9 @@ API_HASH = os.getenv("API_HASH")
 PHONE = os.getenv("PHONE")
 
 SESSION = "resenha_session"
-DELAY_BETWEEN = 2
+DELAY_BETWEEN = 1.5
 FOLDER_NAME = "LOJAS"
+TIMEOUT_PER_BOT = 25  # seconds max per bot
 
 PRODUCT_BUTTONS = [
     "Browse Products", "Browse", "Products", "Shop", "Buy", "Menu",
@@ -94,15 +95,14 @@ async def click_any_button(msg, keywords):
                 if clean_text(kw) in btn_clean or btn_clean in clean_text(kw):
                     try:
                         await msg.click(i, j)
-                        print(f"    Clicked button: {btn.text}")
                         return True
                     except Exception:
                         pass
     return False
 
 async def try_find_with_price(entity, keyword):
-    await asyncio.sleep(1.2)
-    msgs = await client.get_messages(entity, limit=12)
+    await asyncio.sleep(1)
+    msgs = await client.get_messages(entity, limit=10)
     keyword_lower = keyword.lower()
 
     for msg in msgs:
@@ -117,7 +117,7 @@ async def try_find_with_price(entity, keyword):
         out_of_stock = is_out_of_stock(msg.text)
         last_restock = None
         try:
-            older = await client.get_messages(entity, limit=20)
+            older = await client.get_messages(entity, limit=15)
             for om in older:
                 if om.text and om.date:
                     low = om.text.lower()
@@ -133,14 +133,13 @@ async def try_find_with_price(entity, keyword):
             "price": price,
             "out_of_stock": out_of_stock,
             "last_restock": last_restock,
-            "snippet": msg.text[:180]
+            "snippet": msg.text[:160]
         }
     return None
 
 async def bot_responded(entity):
-    """Check if the bot sent any message recently."""
     try:
-        msgs = await client.get_messages(entity, limit=8)
+        msgs = await client.get_messages(entity, limit=6)
         me = await client.get_me()
         for m in msgs:
             if m.sender_id and m.sender_id != me.id:
@@ -150,22 +149,19 @@ async def bot_responded(entity):
     return False
 
 async def clean_chat(entity):
-    """Delete messages sent by us and recent bot menu messages."""
     try:
         me = await client.get_me()
-        msgs = await client.get_messages(entity, limit=30)
+        msgs = await client.get_messages(entity, limit=20)
         to_delete = []
         for m in msgs:
-            if m.sender_id == me.id or (m.reply_markup or (m.text and len(m.text) < 500)):
+            if m.sender_id == me.id or m.reply_markup:
                 to_delete.append(m.id)
         if to_delete:
-            await client.delete_messages(entity, to_delete)
-            print(f"    Cleaned {len(to_delete)} messages")
-    except Exception as e:
-        print(f"    Clean error: {e}")
+            await client.delete_messages(entity, to_delete[:15])
+    except:
+        pass
 
 async def remove_from_folder(username):
-    """Remove a bot from the LOJAS folder."""
     try:
         result = await client(functions.messages.GetDialogFiltersRequest())
         for f in result.filters:
@@ -174,7 +170,6 @@ async def remove_from_folder(username):
                 if isinstance(title, types.TextWithEntities):
                     title = title.text
                 if str(title).upper() == FOLDER_NAME.upper():
-                    # Build new include_peers without this bot
                     new_peers = []
                     for peer in getattr(f, "include_peers", []):
                         try:
@@ -185,91 +180,96 @@ async def remove_from_folder(username):
                         except:
                             new_peers.append(peer)
                     f.include_peers = new_peers
-                    await client(functions.messages.UpdateDialogFilterRequest(
-                        id=f.id,
-                        filter=f
-                    ))
-                    print(f"    Removed {username} from {FOLDER_NAME}")
+                    await client(functions.messages.UpdateDialogFilterRequest(id=f.id, filter=f))
+                    print(f"    Removed {username} from folder")
                     return True
-    except Exception as e:
-        print(f"    Could not remove from folder: {e}")
+    except:
+        pass
     return False
 
 async def explore_bot(entity, keyword):
     try:
-        await client.send_message(entity, "/start")
-        await asyncio.sleep(2.5)
+        await asyncio.wait_for(client.send_message(entity, "/start"), timeout=8)
+        await asyncio.sleep(2)
         if not await bot_responded(entity):
             return "dead"
         res = await try_find_with_price(entity, keyword)
         if res:
             return res
+    except asyncio.TimeoutError:
+        return "timeout"
     except:
         return "dead"
 
-    for attempt in range(3):
-        msgs = await client.get_messages(entity, limit=6)
-        clicked = False
-        for m in msgs:
-            if await click_any_button(m, PRODUCT_BUTTONS + [keyword]):
-                clicked = True
+    for attempt in range(2):
+        try:
+            msgs = await asyncio.wait_for(client.get_messages(entity, limit=5), timeout=6)
+            clicked = False
+            for m in msgs:
+                if await click_any_button(m, PRODUCT_BUTTONS + [keyword]):
+                    clicked = True
+                    break
+            if clicked:
+                res = await try_find_with_price(entity, keyword)
+                if res:
+                    return res
+                await asyncio.sleep(1)
+            else:
                 break
-        if clicked:
-            res = await try_find_with_price(entity, keyword)
-            if res:
-                return res
-            await asyncio.sleep(1.5)
-        else:
+        except:
             break
 
-    for cmd in ["/shop", "/products", "/menu", "/buy"]:
+    for cmd in ["/shop", "/products"]:
         try:
-            await client.send_message(entity, cmd)
-            await asyncio.sleep(2)
+            await asyncio.wait_for(client.send_message(entity, cmd), timeout=6)
+            await asyncio.sleep(1.5)
             res = await try_find_with_price(entity, keyword)
             if res:
                 return res
         except:
             pass
 
-    msgs = await client.get_messages(entity, limit=8)
-    for m in msgs:
-        if await click_any_button(m, [keyword, "Gemini", "AI", "Premium", "ChatGPT", "Claude"]):
-            res = await try_find_with_price(entity, keyword)
-            if res:
-                return res
-            break
-
     return None
 
 async def scan_bot(username, keyword):
     try:
-        entity = await client.get_entity(username)
-        result = await explore_bot(entity, keyword)
+        entity = await asyncio.wait_for(client.get_entity(username), timeout=8)
+        result = await asyncio.wait_for(explore_bot(entity, keyword), timeout=TIMEOUT_PER_BOT)
 
-        # Clean messages after analysis
-        await clean_chat(entity)
+        # Clean in background-ish, don't wait forever
+        try:
+            await asyncio.wait_for(clean_chat(entity), timeout=5)
+        except:
+            pass
 
         if result == "dead":
-            await remove_from_folder(username)
+            try:
+                await asyncio.wait_for(remove_from_folder(username), timeout=6)
+            except:
+                pass
             return {"username": username, "status": "removed_dead", "price": None}
+
+        if result == "timeout":
+            return {"username": username, "status": "timeout", "price": None}
 
         if result:
             result["username"] = username
             result["at"] = datetime.now(timezone.utc).isoformat()
-            print(f"  Found: {result['snippet'][:70]}...")
+            print(f"  Found: {result['snippet'][:60]}...")
             return result
 
         return {"username": username, "status": "not_found", "price": None}
+    except asyncio.TimeoutError:
+        return {"username": username, "status": "timeout", "price": None}
     except FloodWaitError as e:
         print(f"FloodWait {e.seconds}s")
-        await asyncio.sleep(e.seconds + 3)
+        await asyncio.sleep(min(e.seconds, 30))
         return {"username": username, "status": "flood", "price": None}
     except Exception as e:
         err = str(e)
         if "Security error" in err or "old message" in err.lower() or "Too many messages" in err:
             return {"username": username, "status": "skipped_flood", "price": None}
-        return {"username": username, "status": f"error: {err[:40]}", "price": None}
+        return {"username": username, "status": f"error: {err[:30]}", "price": None}
 
 async def get_lojas_bots():
     bots = []
@@ -300,7 +300,7 @@ async def cleanup():
         if client.is_connected():
             print("\nCleaning up...")
             try:
-                await client.get_dialogs(limit=5)
+                await client.get_dialogs(limit=3)
             except:
                 pass
             await client.disconnect()
@@ -330,10 +330,10 @@ async def main():
 
     try:
         print("Syncing updates...")
-        await client.catch_up()
+        await asyncio.wait_for(client.catch_up(), timeout=10)
         await asyncio.sleep(1)
-    except Exception:
-        pass
+    except:
+        print("Sync skipped (timeout or error)")
 
     lojas_bots = await get_lojas_bots()
     if not lojas_bots:
