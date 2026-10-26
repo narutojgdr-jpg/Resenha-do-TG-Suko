@@ -15,8 +15,8 @@ API_HASH = os.getenv("API_HASH")
 PHONE = os.getenv("PHONE")
 
 SESSION = "resenha_session"
-DELAY_BETWEEN = 5
-FOLDER_NAME = "LOJAS"  # Only scan bots inside this folder
+DELAY_BETWEEN = 4
+FOLDER_NAME = "LOJAS"
 
 client = TelegramClient(SESSION, API_ID, API_HASH)
 
@@ -59,7 +59,7 @@ def is_out_of_stock(text: str):
     low = text.lower()
     return any(x in low for x in [
         "out of stock", "sem estoque", "no stock", "sold out",
-        "esgotado", "unavailable", "out of stock"
+        "esgotado", "unavailable"
     ])
 
 def clean_text(text):
@@ -103,10 +103,10 @@ async def navigate(entity, steps):
             if step.startswith("/"):
                 sent = await client.send_message(entity, step)
                 print(f"    Sent: {step} (id={sent.id})")
-                await asyncio.sleep(4)
+                await asyncio.sleep(3.5)
             else:
                 found = False
-                for attempt in range(4):
+                for attempt in range(3):
                     msgs = await client.get_messages(entity, limit=8)
                     for m in msgs:
                         if m.reply_markup and await click_button(m, step):
@@ -114,11 +114,11 @@ async def navigate(entity, steps):
                             break
                     if found:
                         break
-                    await asyncio.sleep(2)
+                    await asyncio.sleep(1.5)
                 if not found:
                     print(f"    Button '{step}' not found, sending as text")
                     await client.send_message(entity, step)
-                await asyncio.sleep(4)
+                await asyncio.sleep(3.5)
         except FloodWaitError as e:
             print(f"FloodWait {e.seconds}s")
             await asyncio.sleep(e.seconds + 5)
@@ -130,7 +130,7 @@ async def navigate(entity, steps):
 
 async def get_last_restock(entity, keyword):
     try:
-        msgs = await client.get_messages(entity, limit=30)
+        msgs = await client.get_messages(entity, limit=25)
         keyword_lower = keyword.lower()
         for msg in msgs:
             if not msg.text or not msg.date:
@@ -142,16 +142,18 @@ async def get_last_restock(entity, keyword):
         pass
     return None
 
-async def scan_source(source, keyword):
+async def scan_bot(username, keyword, steps=None):
+    if steps is None:
+        steps = ["/start"]
     try:
-        entity = await client.get_entity(source["username"])
-        print(f"  Navigating {source['username']}...")
-        ok = await navigate(entity, source.get("steps", ["/start"]))
+        entity = await client.get_entity(username)
+        print(f"  Navigating {username}...")
+        ok = await navigate(entity, steps)
         if not ok:
-            return {"source": source["id"], "status": "nav_failed", "price": None}
+            return {"username": username, "status": "nav_failed", "price": None}
 
         await asyncio.sleep(2)
-        msgs = await client.get_messages(entity, limit=15)
+        msgs = await client.get_messages(entity, limit=12)
         keyword_lower = keyword.lower()
 
         for msg in msgs:
@@ -163,10 +165,9 @@ async def scan_source(source, keyword):
                 last_restock = await get_last_restock(entity, keyword)
 
                 status = "out_of_stock" if out_of_stock else "found"
-                print(f"  Found: {msg.text[:120]}...")
+                print(f"  Found: {msg.text[:100]}...")
                 return {
-                    "source": source["id"],
-                    "username": source["username"],
+                    "username": username,
                     "status": status,
                     "price": price,
                     "out_of_stock": out_of_stock,
@@ -175,16 +176,16 @@ async def scan_source(source, keyword):
                     "at": datetime.now(timezone.utc).isoformat()
                 }
 
-        return {"source": source["id"], "status": "not_found", "price": None}
+        return {"username": username, "status": "not_found", "price": None}
     except FloodWaitError as e:
         print(f"FloodWait {e.seconds}s")
         await asyncio.sleep(e.seconds + 10)
-        return {"source": source["id"], "status": "flood", "price": None}
+        return {"username": username, "status": "flood", "price": None}
     except Exception as e:
-        return {"source": source["id"], "status": f"error: {str(e)[:100]}", "price": None}
+        return {"username": username, "status": f"error: {str(e)[:80]}", "price": None}
 
 async def get_lojas_bots():
-    """Return usernames of bots that are inside the LOJAS folder."""
+    """Return list of @usernames of bots inside the LOJAS folder."""
     bots = []
     try:
         result = await client(functions.messages.GetDialogFiltersRequest())
@@ -194,12 +195,14 @@ async def get_lojas_bots():
                 if isinstance(title, types.TextWithEntities):
                     title = title.text
                 if str(title).upper() == FOLDER_NAME.upper():
-                    print(f"Found folder '{title}' (id={f.id})")
+                    print(f"Found folder '{title}'")
                     for peer in getattr(f, "include_peers", []):
                         try:
                             entity = await client.get_entity(peer)
                             if hasattr(entity, "username") and entity.username:
-                                bots.append("@" + entity.username)
+                                uname = "@" + entity.username
+                                if uname not in bots:
+                                    bots.append(uname)
                         except Exception as e:
                             print(f"  Could not resolve peer: {e}")
                     break
@@ -223,23 +226,27 @@ async def main():
 
     print("Connected. Ready.\n")
 
-    lojas = await get_lojas_bots()
-    if lojas:
-        print(f"Bots found in '{FOLDER_NAME}' folder: {', '.join(lojas)}\n")
-    else:
-        print(f"No bots found in '{FOLDER_NAME}' folder (or folder not detected). Continuing with all sources.\n")
+    lojas_bots = await get_lojas_bots()
+    if not lojas_bots:
+        print(f"No bots found in '{FOLDER_NAME}' folder.")
+        print("Make sure the folder name is exactly 'LOJAS' and the bots are inside it.")
+        await client.disconnect()
+        return
 
-    with open("sources.json", encoding="utf-8") as f:
-        config = json.load(f)
-    sources = config.get("sources", [])
+    print(f"Found {len(lojas_bots)} bots in '{FOLDER_NAME}':")
+    for b in lojas_bots:
+        print(f"  - {b}")
+    print()
 
-    if lojas:
-        filtered = [s for s in sources if s["username"] in lojas]
-        if filtered:
-            sources = filtered
-            print(f"Filtered to {len(sources)} sources inside LOJAS.\n")
-        else:
-            print("Configured sources are not in LOJAS folder. Using all sources.\n")
+    # Load optional custom steps from sources.json (if the bot is listed there)
+    custom_steps = {}
+    try:
+        with open("sources.json", encoding="utf-8") as f:
+            config = json.load(f)
+            for s in config.get("sources", []):
+                custom_steps[s["username"]] = s.get("steps", ["/start"])
+    except:
+        pass
 
     keyword = input("Keyword to search: ").strip()
     if not keyword:
@@ -247,9 +254,10 @@ async def main():
         return
 
     results = []
-    for src in sources:
-        print(f"\nChecking {src['id']} ({src['username']})...")
-        res = await scan_source(src, keyword)
+    for username in lojas_bots:
+        steps = custom_steps.get(username, ["/start"])
+        print(f"\nChecking {username}...")
+        res = await scan_bot(username, keyword, steps)
         results.append(res)
         status_extra = ""
         if res.get("out_of_stock"):
@@ -276,6 +284,8 @@ async def main():
     if valid:
         avg = sum(r["price"] for r in valid) / len(valid)
         print(f"Average: ${avg:.2f}")
+    else:
+        print("No prices found in stock.")
 
     await client.disconnect()
 
