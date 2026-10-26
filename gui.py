@@ -198,15 +198,16 @@ class ScannerApp:
             self.root.after(0, lambda i=i, u=username, t=total: self.set_status(f"[{i+1}/{t}] {u}", PRIMARY))
             self.root.after(0, lambda i=i: self.progress.config(value=i+1))
             
-            res = await self.scan_bot(username, keyword)
-            self.results.append(res)
-            
-            price = res.get("price")
-            if price:
-                oos = res.get("out_of_stock")
-                color = DANGER if oos else ACCENT
-                status = " (sem estoque)" if oos else ""
-                self.root.after(0, lambda u=username, p=price, s=status, c=color: self.log_msg(f"{u}   ${p:.2f}{s}", c))
+            products = await self.scan_bot(username, keyword)
+            for p in products:
+                self.results.append(p)
+                price = p.get("price")
+                if price:
+                    oos = p.get("out_of_stock")
+                    color = DANGER if oos else ACCENT
+                    status = " (sem estoque)" if oos else ""
+                    label = p.get("label") or username
+                    self.root.after(0, lambda l=label, pr=price, s=status, c=color: self.log_msg(f"{l}   ${pr:.2f}{s}", c))
             
             await asyncio.sleep(DELAY_BETWEEN)
             
@@ -250,58 +251,77 @@ class ScannerApp:
         return bots
         
     async def scan_bot(self, username, keyword):
+        products = []
         try:
             entity = await asyncio.wait_for(self.client.get_entity(username), timeout=7)
             
-            last_restock, hist_price, hist_oos = None, None, False
+            last_restock = None
             try:
-                async for msg in self.client.iter_messages(entity, search=keyword, limit=15):
-                    if not msg.text:
-                        continue
-                    if keyword.lower() not in msg.text.lower():
-                        continue
-                    price = extract_price(msg.text)
-                    if price and hist_price is None:
-                        hist_price = price
-                        hist_oos = is_out_of_stock(msg.text)
-                    if any(x in msg.text.lower() for x in ["restock", "added", "stock"]):
+                async for msg in self.client.iter_messages(entity, search=keyword, limit=10):
+                    if msg.text and any(x in msg.text.lower() for x in ["restock", "added", "stock"]):
                         if msg.date:
                             last_restock = msg.date.isoformat()
-                    if hist_price and last_restock:
-                        break
+                            break
             except:
                 pass
-                
+            
             try:
                 await asyncio.wait_for(self.client.send_message(entity, "/start"), timeout=5)
                 await asyncio.sleep(1)
-                msgs = await self.client.get_messages(entity, limit=6)
+                msgs = await self.client.get_messages(entity, limit=8)
+                
+                matching_buttons = []
                 for m in msgs:
                     if m.reply_markup and hasattr(m.reply_markup, "rows"):
                         for i, row in enumerate(m.reply_markup.rows):
                             for j, btn in enumerate(row.buttons):
                                 if hasattr(btn, "text") and keyword.lower() in btn.text.lower():
-                                    try:
-                                        await m.click(i, j)
-                                        await asyncio.sleep(1)
-                                        latest = await self.client.get_messages(entity, limit=3)
-                                        for lm in latest:
-                                            if lm.text and keyword.lower() in lm.text.lower():
-                                                p = extract_price(lm.text)
-                                                if p:
-                                                    return {"username": username, "price": p, "out_of_stock": is_out_of_stock(lm.text), "last_restock": last_restock}
-                                    except:
-                                        pass
+                                    matching_buttons.append((m, i, j, btn.text))
+                
+                for m, i, j, btn_text in matching_buttons:
+                    try:
+                        await m.click(i, j)
+                        await asyncio.sleep(0.8)
+                        latest = await self.client.get_messages(entity, limit=2)
+                        for lm in latest:
+                            if lm.text and keyword.lower() in lm.text.lower():
+                                p = extract_price(lm.text)
+                                if p:
+                                    products.append({
+                                        "username": username,
+                                        "label": btn_text.strip(),
+                                        "price": p,
+                                        "out_of_stock": is_out_of_stock(lm.text),
+                                        "last_restock": last_restock,
+                                    })
+                                    break
+                    except:
+                        pass
             except:
                 pass
-                
-            if hist_price:
-                return {"username": username, "price": hist_price, "out_of_stock": hist_oos, "last_restock": last_restock}
-            return {"username": username, "price": None}
             
+            if not products:
+                try:
+                    async for msg in self.client.iter_messages(entity, search=keyword, limit=20):
+                        if not msg.text or keyword.lower() not in msg.text.lower():
+                            continue
+                        p = extract_price(msg.text)
+                        if p:
+                            products.append({
+                                "username": username,
+                                "label": username,
+                                "price": p,
+                                "out_of_stock": is_out_of_stock(msg.text),
+                                "last_restock": last_restock,
+                            })
+                            break
+                except:
+                    pass
+                    
         except:
-            return {"username": username, "price": None}
-            
+            pass
+        return products
+        
     def send_to_site(self, keyword, results):
         try:
             payload = json.dumps({"keyword": keyword, "results": results}).encode("utf-8")
