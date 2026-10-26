@@ -57,6 +57,21 @@ def extract_price(text: str):
                 pass
     return None
 
+def extract_title(text: str, keyword: str):
+    if not text:
+        return None
+    lines = text.strip().split("\n")
+    for line in lines[:5]:
+        line = line.strip()
+        if not line or len(line) < 3:
+            continue
+        if keyword.lower() in line.lower():
+            clean = re.sub(r"[\u200b\u200c\u200d\ufeff]", "", line)
+            clean = re.sub(r"^[\s\-\*\#\>]+|[\s\-\*\#\>]+$", "", clean)
+            if 3 < len(clean) < 80:
+                return clean
+    return None
+
 def is_out_of_stock(text: str):
     if not text:
         return False
@@ -287,9 +302,10 @@ class ScannerApp:
                             if lm.text and keyword.lower() in lm.text.lower():
                                 p = extract_price(lm.text)
                                 if p:
+                                    title = extract_title(lm.text, keyword) or btn_text.strip()
                                     products.append({
                                         "username": username,
-                                        "label": btn_text.strip(),
+                                        "label": title,
                                         "price": p,
                                         "out_of_stock": is_out_of_stock(lm.text),
                                         "last_restock": last_restock,
@@ -307,9 +323,10 @@ class ScannerApp:
                             continue
                         p = extract_price(msg.text)
                         if p:
+                            title = extract_title(msg.text, keyword) or username
                             products.append({
                                 "username": username,
-                                "label": username,
+                                "label": title,
                                 "price": p,
                                 "out_of_stock": is_out_of_stock(msg.text),
                                 "last_restock": last_restock,
