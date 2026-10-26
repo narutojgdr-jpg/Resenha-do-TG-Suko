@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from telethon import TelegramClient, functions, types
 from telethon.errors import FloodWaitError, SessionPasswordNeededError
 from dotenv import load_dotenv
+import urllib.request
 
 logging.getLogger("telethon").setLevel(logging.ERROR)
 
@@ -22,6 +23,9 @@ SESSION = "resenha_session"
 DELAY_BETWEEN = 1.5
 FOLDER_NAME = "LOJAS"
 TIMEOUT_PER_BOT = 30
+
+SITE_URL = os.getenv("SITE_URL", "https://tempmailsuko.shop")
+SCANNER_SECRET = os.getenv("SCANNER_SECRET", "suko-scanner-2026")
 
 NAV_BUTTONS = ["Browse Products", "Browse", "Products", "Shop", "Buy", "Menu", "Store", "Catalog"]
 
@@ -45,7 +49,6 @@ def auto_pull():
 def extract_price(text: str):
     if not text:
         return None
-    # Prefer prices that look like real product prices
     patterns = [
         r"Price:?\s*\$?([0-9]+\.?[0-9]*)",
         r"\$\s*([0-9]+\.?[0-9]*)",
@@ -58,7 +61,6 @@ def extract_price(text: str):
         if m:
             try:
                 val = float(m.group(1))
-                # Ignore obviously wrong values (stock counts, big numbers)
                 if 0.2 <= val <= 20:
                     return val
             except:
@@ -106,7 +108,6 @@ async def click_product_or_nav(msg, keyword):
                 continue
             low = text.lower()
             if keyword.lower() in low:
-                # Prefer exact product buttons over category ones
                 if any(x in low for x in ["18", "month", "pro", "link", "5tb", "year"]):
                     product_btns.append((i, j, text))
                 else:
@@ -319,6 +320,23 @@ async def get_lojas_bots():
         print(f"Could not read folders: {e}")
     return bots
 
+def send_to_site(keyword, results):
+    try:
+        payload = json.dumps({"keyword": keyword, "results": results}).encode("utf-8")
+        req = urllib.request.Request(
+            f"{SITE_URL}/api/prices",
+            data=payload,
+            headers={
+                "Content-Type": "application/json",
+                "x-scanner-secret": SCANNER_SECRET,
+            },
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            print(f"\nSent to site: {resp.status}")
+    except Exception as e:
+        print(f"\nCould not send to site: {e}")
+
 async def cleanup():
     try:
         if client.is_connected():
@@ -384,6 +402,8 @@ async def main():
         if results:
             with open("last_scan.json", "w", encoding="utf-8") as f:
                 json.dump({"keyword": keyword, "scanned_at": datetime.now(timezone.utc).isoformat(), "results": results}, f, indent=2, ensure_ascii=False)
+
+            send_to_site(keyword, results)
 
         valid = [r for r in results if r.get("price") and not r.get("out_of_stock")]
         valid.sort(key=lambda x: x["price"])
