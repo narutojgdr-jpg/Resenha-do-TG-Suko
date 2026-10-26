@@ -134,7 +134,6 @@ class ScannerApp:
         main = tk.Frame(self.root, bg=BG)
         main.pack(fill=tk.BOTH, expand=True, padx=16, pady=12)
         
-        # Keyword + Preset row
         top_row = tk.Frame(main, bg=BG)
         top_row.pack(fill=tk.X, pady=(0, 8))
         
@@ -154,14 +153,12 @@ class ScannerApp:
         self.start_btn = tk.Button(top_row, text="Iniciar", command=self.start_scan, bg=PRIMARY, fg="#fff", font=("Arial", 10, "bold"), relief=tk.FLAT, padx=16, pady=4, activebackground=PRIMARY_HOVER, activeforeground="#fff", cursor="hand2")
         self.start_btn.pack(side=tk.LEFT)
         
-        # Filters card
         filters_card = tk.Frame(main, bg=CARD, highlightbackground=BORDER, highlightthickness=1)
         filters_card.pack(fill=tk.X, pady=(0, 8))
         
         filters_inner = tk.Frame(filters_card, bg=CARD)
         filters_inner.pack(padx=12, pady=10, fill=tk.X)
         
-        # Blacklist
         bl_frame = tk.Frame(filters_inner, bg=CARD)
         bl_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 8))
         
@@ -170,7 +167,6 @@ class ScannerApp:
         self.blacklist_text.pack(fill=tk.X, pady=(2, 0))
         self.blacklist_text.insert("1.0", "API")
         
-        # Whitelist
         wl_frame = tk.Frame(filters_inner, bg=CARD)
         wl_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         
@@ -178,7 +174,6 @@ class ScannerApp:
         self.whitelist_text = tk.Text(wl_frame, height=3, bg=MUTED, fg=TEXT, font=("Arial", 9), relief=tk.FLAT, wrap=tk.WORD)
         self.whitelist_text.pack(fill=tk.X, pady=(2, 0))
         
-        # Save preset button
         btn_row = tk.Frame(filters_inner, bg=CARD)
         btn_row.pack(fill=tk.X, pady=(8, 0))
         
@@ -186,11 +181,9 @@ class ScannerApp:
         
         tk.Label(btn_row, text="Separe por virgula", bg=CARD, fg=TEXT_MUTED, font=("Arial", 8)).pack(side=tk.RIGHT)
         
-        # Status
         self.status_label = tk.Label(main, text="Pronto", bg=BG, fg=ACCENT, font=("Arial", 10))
         self.status_label.pack(anchor=tk.W, pady=(0, 4))
         
-        # Progress
         style = ttk.Style()
         style.theme_use("clam")
         style.configure("Custom.Horizontal.TProgressbar", troughcolor=MUTED, background=PRIMARY, thickness=6, borderwidth=0)
@@ -198,7 +191,6 @@ class ScannerApp:
         self.progress = ttk.Progressbar(main, length=548, mode="determinate", style="Custom.Horizontal.TProgressbar")
         self.progress.pack(pady=(0, 8))
         
-        # Results
         results_card = tk.Frame(main, bg=CARD, highlightbackground=BORDER, highlightthickness=1)
         results_card.pack(fill=tk.BOTH, expand=True)
         
@@ -207,7 +199,6 @@ class ScannerApp:
         self.log = tk.Text(results_card, height=16, bg=CARD, fg=TEXT, font=("Arial", 9), relief=tk.FLAT, state=tk.DISABLED, wrap=tk.WORD, padx=8, pady=4)
         self.log.pack(fill=tk.BOTH, expand=True, padx=4, pady=(0, 6))
         
-        # Footer
         footer = tk.Frame(self.root, bg=BG)
         footer.pack(fill=tk.X, padx=16, pady=(0, 10))
         
@@ -343,7 +334,7 @@ class ScannerApp:
             await asyncio.sleep(DELAY_BETWEEN)
             
         self.root.after(0, lambda: self.set_status("Enviando pro site...", PRIMARY))
-        self.send_to_site(keyword, self.results)
+        self.send_to_site(keyword.lower(), self.results)
         
         valid = [r for r in self.results if r.get("price") and not r.get("out_of_stock")]
         valid.sort(key=lambda x: x["price"])
@@ -459,7 +450,7 @@ class ScannerApp:
         
     def send_to_site(self, keyword, results):
         try:
-            payload = json.dumps({"keyword": keyword, "results": results}).encode("utf-8")
+            payload = json.dumps({"keyword": keyword.lower(), "results": results}).encode("utf-8")
             req = urllib.request.Request(
                 f"{SITE_URL}/api/prices",
                 data=payload,
