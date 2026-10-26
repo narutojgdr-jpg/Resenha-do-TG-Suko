@@ -19,8 +19,20 @@ API_HASH = os.getenv("API_HASH")
 PHONE = os.getenv("PHONE")
 
 SESSION = "resenha_session"
-DELAY_BETWEEN = 3
+DELAY_BETWEEN = 2.5
 FOLDER_NAME = "LOJAS"
+
+# Common navigation paths to try
+COMMON_STEPS = [
+    ["/start"],
+    ["/start", "Shop"],
+    ["/start", "Products"],
+    ["/start", "Browse"],
+    ["/start", "Menu"],
+    ["/shop"],
+    ["/products"],
+    ["/menu"],
+]
 
 client = TelegramClient(SESSION, API_ID, API_HASH)
 
@@ -98,12 +110,12 @@ async def click_button(msg, text):
                         pass
     return False
 
-async def navigate(entity, steps):
+async def try_navigate(entity, steps):
     for step in steps:
         try:
             if step.startswith("/"):
                 await client.send_message(entity, step)
-                await asyncio.sleep(2.5)
+                await asyncio.sleep(2)
             else:
                 found = False
                 for attempt in range(2):
@@ -114,64 +126,66 @@ async def navigate(entity, steps):
                             break
                     if found:
                         break
-                    await asyncio.sleep(1)
+                    await asyncio.sleep(0.8)
                 if not found:
                     await client.send_message(entity, step)
-                await asyncio.sleep(2.5)
+                await asyncio.sleep(2)
         except FloodWaitError as e:
-            print(f"FloodWait {e.seconds}s")
             await asyncio.sleep(e.seconds + 2)
             return False
         except Exception:
             return False
     return True
 
-async def get_last_restock(entity, keyword):
-    try:
-        msgs = await client.get_messages(entity, limit=15)
-        keyword_lower = keyword.lower()
-        for msg in msgs:
-            if not msg.text or not msg.date:
-                continue
-            low = msg.text.lower()
-            if keyword_lower in low and any(x in low for x in ["new stock", "restock", "added", "stock added", "reestock"]):
-                return msg.date.isoformat()
-    except:
-        pass
+async def find_product(entity, keyword):
+    """Look for the keyword in recent messages after navigation."""
+    await asyncio.sleep(1)
+    msgs = await client.get_messages(entity, limit=10)
+    keyword_lower = keyword.lower()
+
+    for msg in msgs:
+        if not msg.text:
+            continue
+        if keyword_lower in msg.text.lower():
+            price = extract_price(msg.text)
+            out_of_stock = is_out_of_stock(msg.text)
+            last_restock = None
+            try:
+                older = await client.get_messages(entity, limit=15)
+                for om in older:
+                    if om.text and om.date:
+                        low = om.text.lower()
+                        if keyword_lower in low and any(x in low for x in ["new stock", "restock", "added", "stock added", "reestock"]):
+                            last_restock = om.date.isoformat()
+                            break
+            except:
+                pass
+
+            status = "out_of_stock" if out_of_stock else "found"
+            return {
+                "status": status,
+                "price": price,
+                "out_of_stock": out_of_stock,
+                "last_restock": last_restock,
+                "snippet": msg.text[:200]
+            }
     return None
 
-async def scan_bot(username, keyword, steps=None):
-    if steps is None:
-        steps = ["/start"]
+async def scan_bot(username, keyword):
     try:
         entity = await client.get_entity(username)
-        ok = await navigate(entity, steps)
-        if not ok:
-            return {"username": username, "status": "nav_failed", "price": None}
 
-        await asyncio.sleep(1)
-        msgs = await client.get_messages(entity, limit=8)
-        keyword_lower = keyword.lower()
-
-        for msg in msgs:
-            if not msg.text:
+        # Try each common path until we find the product
+        for steps in COMMON_STEPS:
+            ok = await try_navigate(entity, steps)
+            if not ok:
                 continue
-            if keyword_lower in msg.text.lower():
-                price = extract_price(msg.text)
-                out_of_stock = is_out_of_stock(msg.text)
-                last_restock = await get_last_restock(entity, keyword)
-
-                status = "out_of_stock" if out_of_stock else "found"
-                print(f"  Found: {msg.text[:80]}...")
-                return {
-                    "username": username,
-                    "status": status,
-                    "price": price,
-                    "out_of_stock": out_of_stock,
-                    "last_restock": last_restock,
-                    "snippet": msg.text[:200],
-                    "at": datetime.now(timezone.utc).isoformat()
-                }
+            result = await find_product(entity, keyword)
+            if result:
+                result["username"] = username
+                result["at"] = datetime.now(timezone.utc).isoformat()
+                print(f"  Found via {steps}: {result['snippet'][:70]}...")
+                return result
 
         return {"username": username, "status": "not_found", "price": None}
     except FloodWaitError as e:
@@ -182,7 +196,7 @@ async def scan_bot(username, keyword, steps=None):
         err = str(e)
         if "Security error" in err or "old message" in err.lower() or "Too many messages" in err:
             return {"username": username, "status": "skipped_flood", "price": None}
-        return {"username": username, "status": f"error: {err[:50]}", "price": None}
+        return {"username": username, "status": f"error: {err[:40]}", "price": None}
 
 async def get_lojas_bots():
     bots = []
@@ -209,12 +223,11 @@ async def get_lojas_bots():
     return bots
 
 async def cleanup():
-    """Mark recent dialogs as read and disconnect cleanly."""
     try:
         if client.is_connected():
             print("\nCleaning up...")
             try:
-                await client.get_dialogs(limit=10)
+                await client.get_dialogs(limit=5)
             except:
                 pass
             await client.disconnect()
@@ -223,13 +236,7 @@ async def cleanup():
         pass
 
 def signal_handler(sig, frame):
-    print("\nCtrl+C detected. Cleaning up...")
-    try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            loop.create_task(cleanup())
-    except:
-        pass
+    print("\nCtrl+C detected.")
     raise SystemExit
 
 async def main():
@@ -248,7 +255,6 @@ async def main():
 
     print("Connected. Ready.\n")
 
-    # Catch up and reduce flood
     try:
         print("Syncing updates...")
         await client.catch_up()
@@ -264,15 +270,6 @@ async def main():
 
     print(f"Found {len(lojas_bots)} bots in '{FOLDER_NAME}'.\n")
 
-    custom_steps = {}
-    try:
-        with open("sources.json", encoding="utf-8") as f:
-            config = json.load(f)
-            for s in config.get("sources", []):
-                custom_steps[s["username"]] = s.get("steps", ["/start"])
-    except:
-        pass
-
     keyword = input("Keyword to search: ").strip()
     if not keyword:
         print("No keyword. Exiting.")
@@ -282,9 +279,8 @@ async def main():
     results = []
     try:
         for i, username in enumerate(lojas_bots, 1):
-            steps = custom_steps.get(username, ["/start"])
             print(f"\n[{i}/{len(lojas_bots)}] Checking {username}...")
-            res = await scan_bot(username, keyword, steps)
+            res = await scan_bot(username, keyword)
             results.append(res)
             status_extra = ""
             if res.get("out_of_stock"):
@@ -296,7 +292,6 @@ async def main():
     except KeyboardInterrupt:
         print("\nInterrupted by user.")
     finally:
-        # Save partial results
         if results:
             out = {
                 "keyword": keyword,
