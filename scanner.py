@@ -21,7 +21,7 @@ PHONE = os.getenv("PHONE")
 SESSION = "resenha_session"
 DELAY_BETWEEN = 1.5
 FOLDER_NAME = "LOJAS"
-TIMEOUT_PER_BOT = 28
+TIMEOUT_PER_BOT = 30
 
 NAV_BUTTONS = ["Browse Products", "Browse", "Products", "Shop", "Buy", "Menu", "Store", "Catalog"]
 
@@ -45,20 +45,21 @@ def auto_pull():
 def extract_price(text: str):
     if not text:
         return None
+    # Prefer prices that look like real product prices
     patterns = [
-        r"([0-9]+\.?[0-9]*)\s*USDT",
+        r"Price:?\s*\$?([0-9]+\.?[0-9]*)",
         r"\$\s*([0-9]+\.?[0-9]*)",
-        r"Price:\s*\$?([0-9]+\.?[0-9]*)",
+        r"([0-9]+\.?[0-9]*)\s*USDT",
         r"([0-9]+\.?[0-9]*)\s*USD",
-        r"([0-9]+\.?[0-9]*)\s*\$",
-        r"\u2248\s*([0-9]+\.?[0-9]*)",  # ≈ 0.954
+        r"\u2248\s*([0-9]+\.?[0-9]*)",
     ]
     for p in patterns:
         m = re.search(p, text, re.I)
         if m:
             try:
                 val = float(m.group(1))
-                if 0.1 <= val <= 100:
+                # Ignore obviously wrong values (stock counts, big numbers)
+                if 0.2 <= val <= 20:
                     return val
             except:
                 pass
@@ -68,7 +69,7 @@ def is_out_of_stock(text: str):
     if not text:
         return False
     low = text.lower()
-    return any(x in low for x in ["out of stock", "sem estoque", "no stock", "sold out", "esgotado", "unavailable"])
+    return any(x in low for x in ["out of stock", "sem estoque", "no stock", "sold out", "esgotado", "unavailable", "temporarily unavailable"])
 
 def clean_text(text):
     if not text:
@@ -82,18 +83,18 @@ def is_nav_button(btn_text):
 def is_wrong_product(btn_text, keyword):
     low = btn_text.lower()
     kw = keyword.lower()
-    competitors = ["claude", "chatgpt", "gpt", "openai", "capcut", "netflix", "gmail", "spotify", "canva"]
+    competitors = ["claude", "chatgpt", "gpt", "openai", "capcut", "netflix", "gmail", "spotify", "canva", "youtube"]
     for c in competitors:
         if c in low and kw not in low:
             return True
     return False
 
 async def click_product_or_nav(msg, keyword):
-    """Prefer clicking the product itself, then navigation."""
     if not msg or not msg.reply_markup or not hasattr(msg.reply_markup, "rows"):
         return False
 
     product_btns = []
+    category_btns = []
     nav_btns = []
 
     for i, row in enumerate(msg.reply_markup.rows):
@@ -103,20 +104,31 @@ async def click_product_or_nav(msg, keyword):
             text = btn.text
             if is_wrong_product(text, keyword):
                 continue
-            if keyword.lower() in text.lower():
-                product_btns.append((i, j, text))
+            low = text.lower()
+            if keyword.lower() in low:
+                # Prefer exact product buttons over category ones
+                if any(x in low for x in ["18", "month", "pro", "link", "5tb", "year"]):
+                    product_btns.append((i, j, text))
+                else:
+                    category_btns.append((i, j, text))
             elif is_nav_button(text):
                 nav_btns.append((i, j, text))
 
-    # Click the product first if available
-    target = product_btns[0] if product_btns else (nav_btns[0] if nav_btns else None)
+    target = None
+    if product_btns:
+        target = product_btns[0]
+    elif category_btns:
+        target = category_btns[0]
+    elif nav_btns:
+        target = nav_btns[0]
+
     if not target:
         return False
 
     i, j, text = target
     try:
         await msg.click(i, j)
-        print(f"    Clicked: {text[:60]}")
+        print(f"    Clicked: {text[:70]}")
         return True
     except:
         return False
@@ -128,7 +140,7 @@ async def search_in_chat(entity, keyword):
     out_of_stock = False
 
     try:
-        async for msg in client.iter_messages(entity, search=keyword, limit=25):
+        async for msg in client.iter_messages(entity, search=keyword, limit=20):
             if not msg.text or not msg.date:
                 continue
             text_low = msg.text.lower()
@@ -159,7 +171,7 @@ async def get_current_price(entity, keyword):
     except:
         return None
 
-    for attempt in range(3):
+    for attempt in range(4):
         try:
             msgs = await asyncio.wait_for(client.get_messages(entity, limit=8), timeout=5)
             clicked = False
@@ -170,9 +182,8 @@ async def get_current_price(entity, keyword):
             if not clicked:
                 break
 
-            await asyncio.sleep(1.3)
+            await asyncio.sleep(1.4)
 
-            # Check if we landed on a product detail page
             latest = await client.get_messages(entity, limit=6)
             for msg in latest:
                 if not msg.text:
