@@ -2,16 +2,15 @@ import asyncio
 import json
 import os
 import re
-import subprocess
-import logging
 import threading
 import tkinter as tk
-from tkinter import ttk, scrolledtext
+from tkinter import ttk
 from datetime import datetime, timezone
 from telethon import TelegramClient, functions, types
 from telethon.errors import FloodWaitError, SessionPasswordNeededError
 from dotenv import load_dotenv
 import urllib.request
+import logging
 
 logging.getLogger("telethon").setLevel(logging.ERROR)
 
@@ -28,7 +27,17 @@ FOLDER_NAME = "LOJAS"
 SITE_URL = os.getenv("SITE_URL", "https://tempmailsuko.shop")
 SCANNER_SECRET = os.getenv("SCANNER_SECRET", "suko-scanner-2026")
 
-NAV_BUTTONS = ["Browse Products", "Browse", "Products", "Shop", "Buy", "Menu", "Store", "Catalog"]
+# Colors matching the site
+BG = "#13131a"
+CARD = "#1c1c24"
+PRIMARY = "#7c5cbf"
+PRIMARY_HOVER = "#6b46c1"
+ACCENT = "#2ecc71"
+MUTED = "#2a2a32"
+BORDER = "#303038"
+TEXT = "#f2f2f2"
+TEXT_MUTED = "#888"
+DANGER = "#ef4444"
 
 def extract_price(text: str):
     if not text:
@@ -57,30 +66,16 @@ def is_out_of_stock(text: str):
     low = text.lower()
     return any(x in low for x in ["out of stock", "sem estoque", "no stock", "sold out", "esgotado", "unavailable", "temporarily unavailable"])
 
-def clean_text(text):
-    if not text:
-        return ""
-    return re.sub(r'[^a-zA-Z0-9\s]', '', text).lower().strip()
-
-def is_nav_button(btn_text):
-    low = clean_text(btn_text)
-    return any(clean_text(nb) in low for nb in NAV_BUTTONS)
-
-def is_wrong_product(btn_text, keyword):
-    low = btn_text.lower()
-    kw = keyword.lower()
-    competitors = ["claude", "chatgpt", "gpt", "openai", "capcut", "netflix", "gmail", "spotify", "canva", "youtube"]
-    for c in competitors:
-        if c in low and kw not in low:
-            return True
-    return False
-
 class ScannerApp:
     def __init__(self):
         self.root = tk.Tk()
         self.root.title("SuKo Scanner")
-        self.root.geometry("500x600")
-        self.root.configure(bg="#1a1a2e")
+        self.root.geometry("520x640")
+        self.root.configure(bg=BG)
+        self.root.resizable(False, False)
+        
+        # Remove window border decorations feel
+        self.root.option_add("*Font", "Segoe UI 10")
         
         self.client = None
         self.scanning = False
@@ -89,45 +84,76 @@ class ScannerApp:
         self.setup_ui()
         
     def setup_ui(self):
-        # Header
-        header = tk.Label(self.root, text="SuKo Scanner", font=("Segoe UI", 18, "bold"), bg="#1a1a2e", fg="#fff")
-        header.pack(pady=10)
+        # Header bar
+        header = tk.Frame(self.root, bg=PRIMARY, height=50)
+        header.pack(fill=tk.X)
+        header.pack_propagate(False)
         
-        # Keyword input
-        frame = tk.Frame(self.root, bg="#1a1a2e")
-        frame.pack(pady=5)
+        tk.Label(header, text="SuKo Scanner", font=("Segoe UI", 16, "bold"), bg=PRIMARY, fg="#fff").pack(side=tk.LEFT, padx=16, pady=10)
         
-        tk.Label(frame, text="Keyword:", bg="#1a1a2e", fg="#aaa", font=("Segoe UI", 10)).pack(side=tk.LEFT, padx=5)
-        self.keyword_entry = tk.Entry(frame, width=20, font=("Segoe UI", 11), bg="#16213e", fg="#fff", insertbackground="#fff")
-        self.keyword_entry.pack(side=tk.LEFT, padx=5)
+        # Main content
+        main = tk.Frame(self.root, bg=BG)
+        main.pack(fill=tk.BOTH, expand=True, padx=16, pady=16)
+        
+        # Input card
+        input_card = tk.Frame(main, bg=CARD, highlightbackground=BORDER, highlightthickness=1)
+        input_card.pack(fill=tk.X, pady=(0, 12))
+        
+        inner = tk.Frame(input_card, bg=CARD)
+        inner.pack(padx=14, pady=14)
+        
+        tk.Label(inner, text="Keyword", bg=CARD, fg=TEXT_MUTED, font=("Segoe UI", 9)).pack(anchor=tk.W)
+        
+        row = tk.Frame(inner, bg=CARD)
+        row.pack(fill=tk.X, pady=(4, 0))
+        
+        self.keyword_entry = tk.Entry(row, font=("Segoe UI", 12), bg=MUTED, fg=TEXT, insertbackground=TEXT, relief=tk.FLAT, width=22)
+        self.keyword_entry.pack(side=tk.LEFT, ipady=6, padx=(0, 8))
         self.keyword_entry.insert(0, "gemini")
         
-        self.start_btn = tk.Button(frame, text="Iniciar", command=self.start_scan, bg="#0f3460", fg="#fff", font=("Segoe UI", 10, "bold"), padx=15)
-        self.start_btn.pack(side=tk.LEFT, padx=5)
+        self.start_btn = tk.Button(row, text="Iniciar", command=self.start_scan, bg=PRIMARY, fg="#fff", font=("Segoe UI", 10, "bold"), relief=tk.FLAT, padx=20, pady=6, activebackground=PRIMARY_HOVER, activeforeground="#fff", cursor="hand2")
+        self.start_btn.pack(side=tk.LEFT)
         
         # Status
-        self.status_label = tk.Label(self.root, text="Pronto", bg="#1a1a2e", fg="#4ecca3", font=("Segoe UI", 10))
-        self.status_label.pack(pady=5)
+        self.status_label = tk.Label(main, text="Pronto", bg=BG, fg=ACCENT, font=("Segoe UI", 10))
+        self.status_label.pack(anchor=tk.W, pady=(0, 6))
         
         # Progress
-        self.progress = ttk.Progressbar(self.root, length=400, mode="determinate")
-        self.progress.pack(pady=5)
+        style = ttk.Style()
+        style.theme_use("clam")
+        style.configure("Custom.Horizontal.TProgressbar", troughcolor=MUTED, background=PRIMARY, thickness=8, borderwidth=0)
         
-        # Log
-        self.log = scrolledtext.ScrolledText(self.root, height=20, width=55, bg="#0f0f23", fg="#0f0", font=("Consolas", 9), state=tk.DISABLED)
-        self.log.pack(pady=10, padx=10, fill=tk.BOTH, expand=True)
+        self.progress = ttk.Progressbar(main, length=488, mode="determinate", style="Custom.Horizontal.TProgressbar")
+        self.progress.pack(pady=(0, 12))
         
-        # Results count
-        self.count_label = tk.Label(self.root, text="", bg="#1a1a2e", fg="#aaa", font=("Segoe UI", 9))
-        self.count_label.pack(pady=5)
+        # Results card
+        results_card = tk.Frame(main, bg=CARD, highlightbackground=BORDER, highlightthickness=1)
+        results_card.pack(fill=tk.BOTH, expand=True)
         
-    def log_msg(self, msg):
+        tk.Label(results_card, text="Resultados", bg=CARD, fg=TEXT_MUTED, font=("Segoe UI", 9)).pack(anchor=tk.W, padx=14, pady=(10, 4))
+        
+        self.log = tk.Text(results_card, height=18, bg=CARD, fg=TEXT, font=("Segoe UI", 10), relief=tk.FLAT, state=tk.DISABLED, wrap=tk.WORD, padx=10, pady=4)
+        self.log.pack(fill=tk.BOTH, expand=True, padx=4, pady=(0, 8))
+        
+        # Footer
+        footer = tk.Frame(self.root, bg=BG)
+        footer.pack(fill=tk.X, padx=16, pady=(0, 12))
+        
+        self.count_label = tk.Label(footer, text="", bg=BG, fg=TEXT_MUTED, font=("Segoe UI", 9))
+        self.count_label.pack(side=tk.LEFT)
+        
+    def log_msg(self, msg, color=None):
         self.log.config(state=tk.NORMAL)
-        self.log.insert(tk.END, msg + "\n")
+        if color:
+            tag = f"color_{color}"
+            self.log.tag_configure(tag, foreground=color)
+            self.log.insert(tk.END, msg + "\n", tag)
+        else:
+            self.log.insert(tk.END, msg + "\n")
         self.log.see(tk.END)
         self.log.config(state=tk.DISABLED)
         
-    def set_status(self, text, color="#4ecca3"):
+    def set_status(self, text, color=ACCENT):
         self.status_label.config(text=text, fg=color)
         
     def start_scan(self):
@@ -135,14 +161,15 @@ class ScannerApp:
             return
         keyword = self.keyword_entry.get().strip()
         if not keyword:
-            self.log_msg("Digite uma keyword.")
+            self.log_msg("Digite uma keyword.", DANGER)
             return
         self.scanning = True
-        self.start_btn.config(state=tk.DISABLED)
+        self.start_btn.config(state=tk.DISABLED, bg=MUTED)
         self.results = []
         self.log.config(state=tk.NORMAL)
         self.log.delete(1.0, tk.END)
         self.log.config(state=tk.DISABLED)
+        self.count_label.config(text="")
         
         thread = threading.Thread(target=self.run_scan, args=(keyword,), daemon=True)
         thread.start()
@@ -153,34 +180,36 @@ class ScannerApp:
         try:
             loop.run_until_complete(self.do_scan(keyword))
         except Exception as e:
-            self.root.after(0, lambda: self.log_msg(f"Erro: {e}"))
+            self.root.after(0, lambda: self.log_msg(f"Erro: {e}", DANGER))
         finally:
             loop.close()
             self.root.after(0, self.finish_scan)
             
     async def do_scan(self, keyword):
-        self.root.after(0, lambda: self.set_status("Conectando..."))
+        self.root.after(0, lambda: self.set_status("Conectando...", PRIMARY))
         
         self.client = TelegramClient(SESSION, API_ID, API_HASH)
         await self.client.connect()
         
         if not await self.client.is_user_authorized():
-            self.root.after(0, lambda: self.log_msg("Nao autorizado. Rode o scanner.py primeiro pra logar."))
+            self.root.after(0, lambda: self.log_msg("Nao autorizado. Rode o scanner.py primeiro pra logar.", DANGER))
             return
             
-        self.root.after(0, lambda: self.set_status("Buscando bots..."))
+        self.root.after(0, lambda: self.set_status("Buscando bots...", PRIMARY))
         
         bots = await self.get_lojas_bots()
         if not bots:
-            self.root.after(0, lambda: self.log_msg("Nenhum bot na pasta LOJAS."))
+            self.root.after(0, lambda: self.log_msg("Nenhum bot na pasta LOJAS.", DANGER))
             return
             
         total = len(bots)
         self.root.after(0, lambda: self.progress.config(maximum=total))
-        self.root.after(0, lambda: self.log_msg(f"Encontrados {total} bots."))
+        self.root.after(0, lambda: self.log_msg(f"Encontrados {total} bots", TEXT_MUTED))
+        self.root.after(0, lambda: self.log_msg(""))
         
+        found = 0
         for i, username in enumerate(bots):
-            self.root.after(0, lambda i=i, u=username: self.set_status(f"[{i+1}/{total}] {u}"))
+            self.root.after(0, lambda i=i, u=username, t=total: self.set_status(f"[{i+1}/{t}] {u}", PRIMARY))
             self.root.after(0, lambda i=i: self.progress.config(value=i+1))
             
             res = await self.scan_bot(username, keyword)
@@ -188,24 +217,26 @@ class ScannerApp:
             
             price = res.get("price")
             if price:
-                oos = " (sem estoque)" if res.get("out_of_stock") else ""
-                self.root.after(0, lambda u=username, p=price, o=oos: self.log_msg(f"  {u}: ${p}{o}"))
+                found += 1
+                oos = res.get("out_of_stock")
+                color = DANGER if oos else ACCENT
+                status = " (sem estoque)" if oos else ""
+                self.root.after(0, lambda u=username, p=price, s=status, c=color: self.log_msg(f"{u}   ${p:.2f}{s}", c))
             
             await asyncio.sleep(DELAY_BETWEEN)
             
-        # Send to site
-        self.root.after(0, lambda: self.set_status("Enviando pro site..."))
+        self.root.after(0, lambda: self.set_status("Enviando pro site...", PRIMARY))
         self.send_to_site(keyword, self.results)
         
-        # Summary
         valid = [r for r in self.results if r.get("price") and not r.get("out_of_stock")]
         valid.sort(key=lambda x: x["price"])
-        self.root.after(0, lambda: self.log_msg(f"\n=== {len(valid)} em estoque ==="))
-        for r in valid[:10]:
-            self.root.after(0, lambda r=r: self.log_msg(f"{r['username']}: ${r['price']}"))
+        
+        self.root.after(0, lambda: self.log_msg(""))
+        self.root.after(0, lambda: self.log_msg(f"{len(valid)} em estoque", TEXT_MUTED))
+        
         if valid:
             avg = sum(r["price"] for r in valid) / len(valid)
-            self.root.after(0, lambda a=avg: self.count_label.config(text=f"Media: ${a:.2f}"))
+            self.root.after(0, lambda a=avg, n=len(valid): self.count_label.config(text=f"{n} encontrados  ·  media ${a:.2f}"))
             
         await self.client.disconnect()
         
@@ -237,7 +268,6 @@ class ScannerApp:
         try:
             entity = await asyncio.wait_for(self.client.get_entity(username), timeout=7)
             
-            # Search history
             last_restock, hist_price, hist_oos = None, None, False
             try:
                 async for msg in self.client.iter_messages(entity, search=keyword, limit=15):
@@ -257,7 +287,6 @@ class ScannerApp:
             except:
                 pass
                 
-            # Try live
             try:
                 await asyncio.wait_for(self.client.send_message(entity, "/start"), timeout=5)
                 await asyncio.sleep(1)
@@ -298,14 +327,14 @@ class ScannerApp:
                 method="POST",
             )
             with urllib.request.urlopen(req, timeout=15) as resp:
-                self.root.after(0, lambda: self.log_msg(f"Enviado pro site."))
+                self.root.after(0, lambda: self.log_msg("Enviado pro site", ACCENT))
         except Exception as e:
-            self.root.after(0, lambda: self.log_msg(f"Erro ao enviar: {e}"))
+            self.root.after(0, lambda: self.log_msg(f"Erro ao enviar: {e}", DANGER))
             
     def finish_scan(self):
         self.scanning = False
-        self.start_btn.config(state=tk.NORMAL)
-        self.set_status("Pronto")
+        self.start_btn.config(state=tk.NORMAL, bg=PRIMARY)
+        self.set_status("Pronto", ACCENT)
         
     def run(self):
         self.root.mainloop()
