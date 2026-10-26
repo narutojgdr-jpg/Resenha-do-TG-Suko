@@ -4,7 +4,7 @@ import os
 import re
 import subprocess
 from datetime import datetime, timezone
-from telethon import TelegramClient
+from telethon import TelegramClient, functions, types
 from telethon.errors import FloodWaitError, SessionPasswordNeededError
 from dotenv import load_dotenv
 
@@ -129,7 +129,6 @@ async def navigate(entity, steps):
     return True
 
 async def get_last_restock(entity, keyword):
-    """Try to find the most recent restock message related to the keyword."""
     try:
         msgs = await client.get_messages(entity, limit=30)
         keyword_lower = keyword.lower()
@@ -185,14 +184,25 @@ async def scan_source(source, keyword):
         return {"source": source["id"], "status": f"error: {str(e)[:100]}", "price": None}
 
 async def get_lojas_bots():
-    """Return only bots that are inside the LOJAS folder."""
+    """Return usernames of bots that are inside the LOJAS folder."""
     bots = []
     try:
-        dialogs = await client.get_dialogs()
-        for d in dialogs:
-            if d.folder and d.folder.title and d.folder.title.upper() == FOLDER_NAME.upper():
-                if d.entity and hasattr(d.entity, "username") and d.entity.username:
-                    bots.append("@" + d.entity.username)
+        result = await client(functions.messages.GetDialogFiltersRequest())
+        for f in result.filters:
+            if isinstance(f, types.DialogFilter):
+                title = getattr(f, "title", "")
+                if isinstance(title, types.TextWithEntities):
+                    title = title.text
+                if str(title).upper() == FOLDER_NAME.upper():
+                    print(f"Found folder '{title}' (id={f.id})")
+                    for peer in getattr(f, "include_peers", []):
+                        try:
+                            entity = await client.get_entity(peer)
+                            if hasattr(entity, "username") and entity.username:
+                                bots.append("@" + entity.username)
+                        except Exception as e:
+                            print(f"  Could not resolve peer: {e}")
+                    break
     except Exception as e:
         print(f"Could not read folders: {e}")
     return bots
@@ -213,23 +223,23 @@ async def main():
 
     print("Connected. Ready.\n")
 
-    # Optional: show which bots are in LOJAS
     lojas = await get_lojas_bots()
     if lojas:
         print(f"Bots found in '{FOLDER_NAME}' folder: {', '.join(lojas)}\n")
+    else:
+        print(f"No bots found in '{FOLDER_NAME}' folder (or folder not detected). Continuing with all sources.\n")
 
     with open("sources.json", encoding="utf-8") as f:
         config = json.load(f)
     sources = config.get("sources", [])
 
-    # Filter sources to only those that exist in LOJAS folder (if we could read it)
     if lojas:
-        sources = [s for s in sources if s["username"] in lojas]
-        if not sources:
-            print("None of the configured sources are inside the LOJAS folder.")
-            print("Add the correct bots to sources.json or move them to the LOJAS folder.")
-            await client.disconnect()
-            return
+        filtered = [s for s in sources if s["username"] in lojas]
+        if filtered:
+            sources = filtered
+            print(f"Filtered to {len(sources)} sources inside LOJAS.\n")
+        else:
+            print("Configured sources are not in LOJAS folder. Using all sources.\n")
 
     keyword = input("Keyword to search: ").strip()
     if not keyword:
