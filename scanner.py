@@ -21,7 +21,7 @@ PHONE = os.getenv("PHONE")
 SESSION = "resenha_session"
 DELAY_BETWEEN = 1.5
 FOLDER_NAME = "LOJAS"
-TIMEOUT_PER_BOT = 20
+TIMEOUT_PER_BOT = 25
 
 NAV_BUTTONS = ["Browse Products", "Browse", "Products", "Shop", "Buy", "Menu", "Store", "Catalog"]
 
@@ -74,46 +74,37 @@ def clean_text(text):
         return ""
     return re.sub(r'[^a-zA-Z0-9\s]', '', text).lower().strip()
 
-def button_is_relevant(btn_text, keyword):
-    """Only click if it matches the keyword or is pure navigation."""
+def is_relevant_button(btn_text, keyword):
     low = btn_text.lower()
     kw = keyword.lower()
-
-    # Direct match with keyword
     if kw in low:
         return True
-
-    # Pure navigation (doesn't mention other products)
     if any(clean_text(nb) in clean_text(btn_text) for nb in NAV_BUTTONS):
-        # Make sure it doesn't mention a competing product
-        competitors = ["claude", "chatgpt", "gpt-4", "gpt4", "openai", "capcut", "netflix"]
+        competitors = ["claude", "chatgpt", "gpt", "openai", "capcut", "netflix", "gmail"]
         for c in competitors:
             if c in low and kw not in low:
                 return False
         return True
-
     return False
 
 async def click_relevant_button(msg, keyword):
     if not msg or not msg.reply_markup or not hasattr(msg.reply_markup, "rows"):
         return False
 
-    # Prefer buttons that contain the keyword
-    keyword_buttons = []
-    nav_buttons = []
+    keyword_btns = []
+    nav_btns = []
 
     for i, row in enumerate(msg.reply_markup.rows):
         for j, btn in enumerate(row.buttons):
             if not hasattr(btn, "text"):
                 continue
-            if button_is_relevant(btn.text, keyword):
+            if is_relevant_button(btn.text, keyword):
                 if keyword.lower() in btn.text.lower():
-                    keyword_buttons.append((i, j, btn.text))
+                    keyword_btns.append((i, j, btn.text))
                 else:
-                    nav_buttons.append((i, j, btn.text))
+                    nav_btns.append((i, j, btn.text))
 
-    # Click keyword button first
-    target = keyword_buttons[0] if keyword_buttons else (nav_buttons[0] if nav_buttons else None)
+    target = keyword_btns[0] if keyword_btns else (nav_btns[0] if nav_btns else None)
     if not target:
         return False
 
@@ -125,61 +116,79 @@ async def click_relevant_button(msg, keyword):
     except:
         return False
 
-async def try_find_with_price(entity, keyword):
-    await asyncio.sleep(1)
-    msgs = await client.get_messages(entity, limit=8)
-    kw = keyword.lower()
+async def search_in_chat(entity, keyword):
+    """Search inside the bot chat for the keyword. Returns last restock and any price found."""
+    last_restock = None
+    found_price = None
+    snippet = None
+    out_of_stock = False
 
-    for msg in msgs:
-        if not msg.text:
-            continue
-        text_low = msg.text.lower()
-        if kw not in text_low:
-            continue
-        # Make sure the message is mainly about the keyword, not another product
-        if any(x in text_low for x in ["claude", "chatgpt", "gpt ", "gpt-", "openai"]) and kw not in text_low.split("claude")[0][:50]:
-            continue
-
-        price = extract_price(msg.text)
-        if price is None:
-            continue
-
-        out_of_stock = is_out_of_stock(msg.text)
-        last_restock = None
-        try:
-            older = await client.get_messages(entity, limit=12)
-            for om in older:
-                if om.text and om.date and kw in om.text.lower():
-                    if any(x in om.text.lower() for x in ["restock", "added", "new stock"]):
-                        last_restock = om.date.isoformat()
-                        break
-        except:
-            pass
-
-        return {
-            "status": "out_of_stock" if out_of_stock else "found",
-            "price": price,
-            "out_of_stock": out_of_stock,
-            "last_restock": last_restock,
-            "snippet": msg.text[:150]
-        }
-    return None
-
-async def bot_responded(entity):
     try:
-        msgs = await client.get_messages(entity, limit=5)
-        me = await client.get_me()
-        return any(m.sender_id and m.sender_id != me.id for m in msgs)
+        async for msg in client.iter_messages(entity, search=keyword, limit=30):
+            if not msg.text or not msg.date:
+                continue
+            text_low = msg.text.lower()
+            if keyword.lower() not in text_low:
+                continue
+
+            # Prefer restock messages
+            if any(x in text_low for x in ["restock", "new stock", "added", "reestock", "stock added"]):
+                if last_restock is None or msg.date > datetime.fromisoformat(last_restock):
+                    last_restock = msg.date.isoformat()
+
+            # Capture price if present
+            price = extract_price(msg.text)
+            if price and found_price is None:
+                found_price = price
+                snippet = msg.text[:160]
+                out_of_stock = is_out_of_stock(msg.text)
+
+            # Stop early if we have both
+            if last_restock and found_price:
+                break
+    except Exception:
+        pass
+
+    return last_restock, found_price, snippet, out_of_stock
+
+async def get_current_price(entity, keyword):
+    """Try to get the live price by navigating."""
+    try:
+        await asyncio.wait_for(client.send_message(entity, "/start"), timeout=6)
+        await asyncio.sleep(1.5)
     except:
-        return False
+        return None
+
+    for _ in range(2):
+        try:
+            msgs = await asyncio.wait_for(client.get_messages(entity, limit=6), timeout=5)
+            clicked = False
+            for m in msgs:
+                if await click_relevant_button(m, keyword):
+                    clicked = True
+                    break
+            if not clicked:
+                break
+            await asyncio.sleep(1.2)
+            # Check latest messages for price
+            latest = await client.get_messages(entity, limit=5)
+            for msg in latest:
+                if msg.text and keyword.lower() in msg.text.lower():
+                    price = extract_price(msg.text)
+                    if price:
+                        return price, is_out_of_stock(msg.text), msg.text[:140]
+        except:
+            break
+
+    return None
 
 async def clean_chat(entity):
     try:
         me = await client.get_me()
-        msgs = await client.get_messages(entity, limit=15)
+        msgs = await client.get_messages(entity, limit=12)
         ids = [m.id for m in msgs if m.sender_id == me.id or m.reply_markup]
         if ids:
-            await client.delete_messages(entity, ids[:12])
+            await client.delete_messages(entity, ids[:10])
     except:
         pass
 
@@ -209,76 +218,61 @@ async def remove_from_folder(username):
         pass
     return False
 
-async def explore_bot(entity, keyword):
-    try:
-        await asyncio.wait_for(client.send_message(entity, "/start"), timeout=7)
-        await asyncio.sleep(2)
-        if not await bot_responded(entity):
-            return "dead"
-        res = await try_find_with_price(entity, keyword)
-        if res:
-            return res
-    except asyncio.TimeoutError:
-        return "timeout"
-    except:
-        return "dead"
-
-    for _ in range(2):
-        try:
-            msgs = await asyncio.wait_for(client.get_messages(entity, limit=5), timeout=5)
-            clicked = False
-            for m in msgs:
-                if await click_relevant_button(m, keyword):
-                    clicked = True
-                    break
-            if not clicked:
-                break
-            res = await try_find_with_price(entity, keyword)
-            if res:
-                return res
-            await asyncio.sleep(1)
-        except:
-            break
-
-    for cmd in ["/shop", "/products"]:
-        try:
-            await asyncio.wait_for(client.send_message(entity, cmd), timeout=5)
-            await asyncio.sleep(1.5)
-            res = await try_find_with_price(entity, keyword)
-            if res:
-                return res
-        except:
-            pass
-
-    return None
-
 async def scan_bot(username, keyword):
     try:
         entity = await asyncio.wait_for(client.get_entity(username), timeout=7)
-        result = await asyncio.wait_for(explore_bot(entity, keyword), timeout=TIMEOUT_PER_BOT)
 
+        # 1. Search inside the chat for restock + historical price
+        last_restock, hist_price, hist_snippet, hist_oos = await search_in_chat(entity, keyword)
+
+        # 2. Try to get current live price
+        current = await get_current_price(entity, keyword)
+
+        # Clean
         try:
             await asyncio.wait_for(clean_chat(entity), timeout=4)
         except:
             pass
 
-        if result == "dead":
-            try:
-                await asyncio.wait_for(remove_from_folder(username), timeout=5)
-            except:
-                pass
-            return {"username": username, "status": "removed_dead", "price": None}
+        if current:
+            price, oos, snippet = current
+            status = "out_of_stock" if oos else "found"
+            print(f"  Found (live): {snippet[:55]}...")
+            return {
+                "username": username,
+                "status": status,
+                "price": price,
+                "out_of_stock": oos,
+                "last_restock": last_restock,
+                "snippet": snippet,
+                "at": datetime.now(timezone.utc).isoformat()
+            }
 
-        if result == "timeout":
-            return {"username": username, "status": "timeout", "price": None}
+        if hist_price:
+            status = "out_of_stock" if hist_oos else "found"
+            print(f"  Found (history): {hist_snippet[:55] if hist_snippet else ''}...")
+            return {
+                "username": username,
+                "status": status,
+                "price": hist_price,
+                "out_of_stock": hist_oos,
+                "last_restock": last_restock,
+                "snippet": hist_snippet,
+                "at": datetime.now(timezone.utc).isoformat()
+            }
 
-        if result:
-            result["username"] = username
-            result["at"] = datetime.now(timezone.utc).isoformat()
-            print(f"  Found: {result['snippet'][:55]}...")
-            return result
+        # Check if bot is dead (no response at all)
+        try:
+            msgs = await client.get_messages(entity, limit=3)
+            me = await client.get_me()
+            if not any(m.sender_id and m.sender_id != me.id for m in msgs):
+                await remove_from_folder(username)
+                return {"username": username, "status": "removed_dead", "price": None}
+        except:
+            pass
 
-        return {"username": username, "status": "not_found", "price": None}
+        return {"username": username, "status": "not_found", "price": None, "last_restock": last_restock}
+
     except asyncio.TimeoutError:
         return {"username": username, "status": "timeout", "price": None}
     except FloodWaitError as e:
@@ -384,7 +378,8 @@ async def main():
         valid.sort(key=lambda x: x["price"])
         print("\n=== Summary (in stock) ===")
         for r in valid:
-            print(f"{r['username']}: ${r['price']}")
+            rest = f" | restock: {r.get('last_restock')}" if r.get("last_restock") else ""
+            print(f"{r['username']}: ${r['price']}{rest}")
         if valid:
             print(f"Average: ${sum(r['price'] for r in valid)/len(valid):.2f}")
         else:
