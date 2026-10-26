@@ -19,19 +19,14 @@ API_HASH = os.getenv("API_HASH")
 PHONE = os.getenv("PHONE")
 
 SESSION = "resenha_session"
-DELAY_BETWEEN = 2.5
+DELAY_BETWEEN = 2
 FOLDER_NAME = "LOJAS"
 
-# Common navigation paths to try
-COMMON_STEPS = [
-    ["/start"],
-    ["/start", "Shop"],
-    ["/start", "Products"],
-    ["/start", "Browse"],
-    ["/start", "Menu"],
-    ["/shop"],
-    ["/products"],
-    ["/menu"],
+# Buttons we try to click when looking for products
+PRODUCT_BUTTONS = [
+    "Browse Products", "Browse", "Products", "Shop", "Buy", "Menu",
+    "Store", "Catalog", "Services", "Premium", "AI", "Gemini",
+    "ChatGPT", "Claude", "GPT"
 ]
 
 client = TelegramClient(SESSION, API_ID, API_HASH)
@@ -59,12 +54,15 @@ def extract_price(text: str):
         r"\$\s*([0-9]+\.?[0-9]*)",
         r"Price:\s*\$?([0-9]+\.?[0-9]*)",
         r"([0-9]+\.?[0-9]*)\s*USD",
+        r"([0-9]+\.?[0-9]*)\s*\$",
     ]
     for p in patterns:
         m = re.search(p, text, re.I)
         if m:
             try:
-                return float(m.group(1))
+                val = float(m.group(1))
+                if 0.1 <= val <= 100:  # reasonable price range
+                    return val
             except:
                 pass
     return None
@@ -75,7 +73,7 @@ def is_out_of_stock(text: str):
     low = text.lower()
     return any(x in low for x in [
         "out of stock", "sem estoque", "no stock", "sold out",
-        "esgotado", "unavailable"
+        "esgotado", "unavailable", "0 pcs", "0 left"
     ])
 
 def clean_text(text):
@@ -84,109 +82,123 @@ def clean_text(text):
     cleaned = re.sub(r'[^a-zA-Z0-9\s]', '', text)
     return cleaned.lower().strip()
 
-async def click_button(msg, text):
-    if not msg or not msg.reply_markup:
+async def click_any_button(msg, keywords):
+    """Try to click any button that matches one of the keywords."""
+    if not msg or not msg.reply_markup or not hasattr(msg.reply_markup, "rows"):
         return False
-    target = clean_text(text)
     markup = msg.reply_markup
-    if not hasattr(markup, "rows"):
-        return False
-
-    try:
-        await msg.click(text=text)
-        return True
-    except Exception:
-        pass
-
     for i, row in enumerate(markup.rows):
         for j, btn in enumerate(row.buttons):
-            if hasattr(btn, "text"):
-                btn_clean = clean_text(btn.text)
-                if target in btn_clean or btn_clean in target:
+            if not hasattr(btn, "text"):
+                continue
+            btn_clean = clean_text(btn.text)
+            for kw in keywords:
+                if clean_text(kw) in btn_clean or btn_clean in clean_text(kw):
                     try:
                         await msg.click(i, j)
+                        print(f"    Clicked button: {btn.text}")
                         return True
                     except Exception:
                         pass
     return False
 
-async def try_navigate(entity, steps):
-    for step in steps:
-        try:
-            if step.startswith("/"):
-                await client.send_message(entity, step)
-                await asyncio.sleep(2)
-            else:
-                found = False
-                for attempt in range(2):
-                    msgs = await client.get_messages(entity, limit=5)
-                    for m in msgs:
-                        if m.reply_markup and await click_button(m, step):
-                            found = True
-                            break
-                    if found:
-                        break
-                    await asyncio.sleep(0.8)
-                if not found:
-                    await client.send_message(entity, step)
-                await asyncio.sleep(2)
-        except FloodWaitError as e:
-            await asyncio.sleep(e.seconds + 2)
-            return False
-        except Exception:
-            return False
-    return True
-
-async def find_product(entity, keyword):
-    """Look for the keyword in recent messages after navigation."""
-    await asyncio.sleep(1)
-    msgs = await client.get_messages(entity, limit=10)
+async def try_find_with_price(entity, keyword):
+    """Look for keyword + price in recent messages."""
+    await asyncio.sleep(1.2)
+    msgs = await client.get_messages(entity, limit=12)
     keyword_lower = keyword.lower()
 
     for msg in msgs:
         if not msg.text:
             continue
-        if keyword_lower in msg.text.lower():
-            price = extract_price(msg.text)
-            out_of_stock = is_out_of_stock(msg.text)
-            last_restock = None
-            try:
-                older = await client.get_messages(entity, limit=15)
-                for om in older:
-                    if om.text and om.date:
-                        low = om.text.lower()
-                        if keyword_lower in low and any(x in low for x in ["new stock", "restock", "added", "stock added", "reestock"]):
-                            last_restock = om.date.isoformat()
-                            break
-            except:
-                pass
+        if keyword_lower not in msg.text.lower():
+            continue
+        price = extract_price(msg.text)
+        if price is None:
+            continue  # skip if no price
 
-            status = "out_of_stock" if out_of_stock else "found"
-            return {
-                "status": status,
-                "price": price,
-                "out_of_stock": out_of_stock,
-                "last_restock": last_restock,
-                "snippet": msg.text[:200]
-            }
+        out_of_stock = is_out_of_stock(msg.text)
+        last_restock = None
+        try:
+            older = await client.get_messages(entity, limit=20)
+            for om in older:
+                if om.text and om.date:
+                    low = om.text.lower()
+                    if keyword_lower in low and any(x in low for x in ["new stock", "restock", "added", "stock added", "reestock"]):
+                        last_restock = om.date.isoformat()
+                        break
+        except:
+            pass
+
+        status = "out_of_stock" if out_of_stock else "found"
+        return {
+            "status": status,
+            "price": price,
+            "out_of_stock": out_of_stock,
+            "last_restock": last_restock,
+            "snippet": msg.text[:180]
+        }
+    return None
+
+async def explore_bot(entity, keyword):
+    """Try multiple ways to find the product with a price."""
+    # 1. Just /start
+    try:
+        await client.send_message(entity, "/start")
+        await asyncio.sleep(2)
+        res = await try_find_with_price(entity, keyword)
+        if res:
+            return res
+    except:
+        pass
+
+    # 2. Click product-related buttons on the latest messages
+    for attempt in range(3):
+        msgs = await client.get_messages(entity, limit=6)
+        clicked = False
+        for m in msgs:
+            if await click_any_button(m, PRODUCT_BUTTONS + [keyword]):
+                clicked = True
+                break
+        if clicked:
+            res = await try_find_with_price(entity, keyword)
+            if res:
+                return res
+            await asyncio.sleep(1.5)
+        else:
+            break
+
+    # 3. Try common commands
+    for cmd in ["/shop", "/products", "/menu", "/buy"]:
+        try:
+            await client.send_message(entity, cmd)
+            await asyncio.sleep(2)
+            res = await try_find_with_price(entity, keyword)
+            if res:
+                return res
+        except:
+            pass
+
+    # 4. One more pass clicking buttons (categories)
+    msgs = await client.get_messages(entity, limit=8)
+    for m in msgs:
+        if await click_any_button(m, [keyword, "Gemini", "AI", "Premium", "ChatGPT", "Claude"]):
+            res = await try_find_with_price(entity, keyword)
+            if res:
+                return res
+            break
+
     return None
 
 async def scan_bot(username, keyword):
     try:
         entity = await client.get_entity(username)
-
-        # Try each common path until we find the product
-        for steps in COMMON_STEPS:
-            ok = await try_navigate(entity, steps)
-            if not ok:
-                continue
-            result = await find_product(entity, keyword)
-            if result:
-                result["username"] = username
-                result["at"] = datetime.now(timezone.utc).isoformat()
-                print(f"  Found via {steps}: {result['snippet'][:70]}...")
-                return result
-
+        result = await explore_bot(entity, keyword)
+        if result:
+            result["username"] = username
+            result["at"] = datetime.now(timezone.utc).isoformat()
+            print(f"  Found: {result['snippet'][:70]}...")
+            return result
         return {"username": username, "status": "not_found", "price": None}
     except FloodWaitError as e:
         print(f"FloodWait {e.seconds}s")
