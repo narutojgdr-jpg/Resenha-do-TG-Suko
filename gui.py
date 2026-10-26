@@ -21,6 +21,7 @@ PHONE = os.getenv("PHONE")
 SESSION = "resenha_session"
 DELAY_BETWEEN = 1.5
 FOLDER_NAME = "LOJAS"
+PRESETS_FILE = "presets.json"
 
 SITE_URL = os.getenv("SITE_URL", "https://tempmailsuko.shop")
 SCANNER_SECRET = os.getenv("SCANNER_SECRET", "suko-scanner-2026")
@@ -51,7 +52,7 @@ def extract_price(text: str):
         if m:
             try:
                 val = float(m.group(1))
-                if 0.2 <= val <= 20:
+                if 0.2 <= val <= 50:
                     return val
             except:
                 pass
@@ -68,7 +69,7 @@ def extract_title(text: str, keyword: str):
         if keyword.lower() in line.lower():
             clean = re.sub(r"[\u200b\u200c\u200d\ufeff]", "", line)
             clean = re.sub(r"^[\s\-\*\#\>]+|[\s\-\*\#\>]+$", "", clean)
-            if 3 < len(clean) < 80:
+            if 3 < len(clean) < 100:
                 return clean
     return None
 
@@ -78,19 +79,50 @@ def is_out_of_stock(text: str):
     low = text.lower()
     return any(x in low for x in ["out of stock", "sem estoque", "no stock", "sold out", "esgotado", "unavailable", "temporarily unavailable"])
 
+def passes_filters(title: str, blacklist: list, whitelist: list):
+    if not title:
+        return False
+    low = title.lower()
+    for bl in blacklist:
+        if bl.strip() and bl.strip().lower() in low:
+            return False
+    if whitelist:
+        for wl in whitelist:
+            if wl.strip() and wl.strip().lower() in low:
+                return True
+        return False
+    return True
+
 class ScannerApp:
     def __init__(self):
         self.root = tk.Tk()
         self.root.title("SuKo Scanner")
-        self.root.geometry("520x640")
+        self.root.geometry("580x720")
         self.root.configure(bg=BG)
         self.root.resizable(False, False)
         
         self.client = None
         self.scanning = False
         self.results = []
+        self.presets = self.load_presets()
         
         self.setup_ui()
+        
+    def load_presets(self):
+        try:
+            if os.path.exists(PRESETS_FILE):
+                with open(PRESETS_FILE, "r", encoding="utf-8") as f:
+                    return json.load(f)
+        except:
+            pass
+        return {}
+    
+    def save_presets(self):
+        try:
+            with open(PRESETS_FILE, "w", encoding="utf-8") as f:
+                json.dump(self.presets, f, ensure_ascii=False, indent=2)
+        except:
+            pass
         
     def setup_ui(self):
         header = tk.Frame(self.root, bg=PRIMARY, height=50)
@@ -100,49 +132,128 @@ class ScannerApp:
         tk.Label(header, text="SuKo Scanner", font=("Arial", 16, "bold"), bg=PRIMARY, fg="#fff").pack(side=tk.LEFT, padx=16, pady=10)
         
         main = tk.Frame(self.root, bg=BG)
-        main.pack(fill=tk.BOTH, expand=True, padx=16, pady=16)
+        main.pack(fill=tk.BOTH, expand=True, padx=16, pady=12)
         
-        input_card = tk.Frame(main, bg=CARD, highlightbackground=BORDER, highlightthickness=1)
-        input_card.pack(fill=tk.X, pady=(0, 12))
+        # Keyword + Preset row
+        top_row = tk.Frame(main, bg=BG)
+        top_row.pack(fill=tk.X, pady=(0, 8))
         
-        inner = tk.Frame(input_card, bg=CARD)
-        inner.pack(padx=14, pady=14)
+        tk.Label(top_row, text="Keyword", bg=BG, fg=TEXT_MUTED, font=("Arial", 9)).pack(side=tk.LEFT)
         
-        tk.Label(inner, text="Keyword", bg=CARD, fg=TEXT_MUTED, font=("Arial", 9)).pack(anchor=tk.W)
+        self.keyword_entry = tk.Entry(top_row, font=("Arial", 11), bg=MUTED, fg=TEXT, insertbackground=TEXT, relief=tk.FLAT, width=14)
+        self.keyword_entry.pack(side=tk.LEFT, ipady=4, padx=(8, 8))
+        self.keyword_entry.insert(0, "claude")
+        self.keyword_entry.bind("<KeyRelease>", self.on_keyword_change)
         
-        row = tk.Frame(inner, bg=CARD)
-        row.pack(fill=tk.X, pady=(4, 0))
+        self.preset_var = tk.StringVar()
+        self.preset_combo = ttk.Combobox(top_row, textvariable=self.preset_var, width=12, state="readonly")
+        self.preset_combo.pack(side=tk.LEFT, padx=(0, 8))
+        self.preset_combo.bind("<<ComboboxSelected>>", self.load_preset)
+        self.update_preset_list()
         
-        self.keyword_entry = tk.Entry(row, font=("Arial", 12), bg=MUTED, fg=TEXT, insertbackground=TEXT, relief=tk.FLAT, width=22)
-        self.keyword_entry.pack(side=tk.LEFT, ipady=6, padx=(0, 8))
-        self.keyword_entry.insert(0, "gemini")
-        
-        self.start_btn = tk.Button(row, text="Iniciar", command=self.start_scan, bg=PRIMARY, fg="#fff", font=("Arial", 10, "bold"), relief=tk.FLAT, padx=20, pady=6, activebackground=PRIMARY_HOVER, activeforeground="#fff", cursor="hand2")
+        self.start_btn = tk.Button(top_row, text="Iniciar", command=self.start_scan, bg=PRIMARY, fg="#fff", font=("Arial", 10, "bold"), relief=tk.FLAT, padx=16, pady=4, activebackground=PRIMARY_HOVER, activeforeground="#fff", cursor="hand2")
         self.start_btn.pack(side=tk.LEFT)
         
-        self.status_label = tk.Label(main, text="Pronto", bg=BG, fg=ACCENT, font=("Arial", 10))
-        self.status_label.pack(anchor=tk.W, pady=(0, 6))
+        # Filters card
+        filters_card = tk.Frame(main, bg=CARD, highlightbackground=BORDER, highlightthickness=1)
+        filters_card.pack(fill=tk.X, pady=(0, 8))
         
+        filters_inner = tk.Frame(filters_card, bg=CARD)
+        filters_inner.pack(padx=12, pady=10, fill=tk.X)
+        
+        # Blacklist
+        bl_frame = tk.Frame(filters_inner, bg=CARD)
+        bl_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 8))
+        
+        tk.Label(bl_frame, text="Blacklist (excluir)", bg=CARD, fg=DANGER, font=("Arial", 9)).pack(anchor=tk.W)
+        self.blacklist_text = tk.Text(bl_frame, height=3, bg=MUTED, fg=TEXT, font=("Arial", 9), relief=tk.FLAT, wrap=tk.WORD)
+        self.blacklist_text.pack(fill=tk.X, pady=(2, 0))
+        self.blacklist_text.insert("1.0", "API")
+        
+        # Whitelist
+        wl_frame = tk.Frame(filters_inner, bg=CARD)
+        wl_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        
+        tk.Label(wl_frame, text="Whitelist (obrigatorio)", bg=CARD, fg=ACCENT, font=("Arial", 9)).pack(anchor=tk.W)
+        self.whitelist_text = tk.Text(wl_frame, height=3, bg=MUTED, fg=TEXT, font=("Arial", 9), relief=tk.FLAT, wrap=tk.WORD)
+        self.whitelist_text.pack(fill=tk.X, pady=(2, 0))
+        
+        # Save preset button
+        btn_row = tk.Frame(filters_inner, bg=CARD)
+        btn_row.pack(fill=tk.X, pady=(8, 0))
+        
+        tk.Button(btn_row, text="Salvar Preset", command=self.save_current_preset, bg=MUTED, fg=TEXT, font=("Arial", 9), relief=tk.FLAT, padx=12, pady=2, cursor="hand2").pack(side=tk.LEFT)
+        
+        tk.Label(btn_row, text="Separe por virgula", bg=CARD, fg=TEXT_MUTED, font=("Arial", 8)).pack(side=tk.RIGHT)
+        
+        # Status
+        self.status_label = tk.Label(main, text="Pronto", bg=BG, fg=ACCENT, font=("Arial", 10))
+        self.status_label.pack(anchor=tk.W, pady=(0, 4))
+        
+        # Progress
         style = ttk.Style()
         style.theme_use("clam")
-        style.configure("Custom.Horizontal.TProgressbar", troughcolor=MUTED, background=PRIMARY, thickness=8, borderwidth=0)
+        style.configure("Custom.Horizontal.TProgressbar", troughcolor=MUTED, background=PRIMARY, thickness=6, borderwidth=0)
         
-        self.progress = ttk.Progressbar(main, length=488, mode="determinate", style="Custom.Horizontal.TProgressbar")
-        self.progress.pack(pady=(0, 12))
+        self.progress = ttk.Progressbar(main, length=548, mode="determinate", style="Custom.Horizontal.TProgressbar")
+        self.progress.pack(pady=(0, 8))
         
+        # Results
         results_card = tk.Frame(main, bg=CARD, highlightbackground=BORDER, highlightthickness=1)
         results_card.pack(fill=tk.BOTH, expand=True)
         
-        tk.Label(results_card, text="Resultados", bg=CARD, fg=TEXT_MUTED, font=("Arial", 9)).pack(anchor=tk.W, padx=14, pady=(10, 4))
+        tk.Label(results_card, text="Resultados", bg=CARD, fg=TEXT_MUTED, font=("Arial", 9)).pack(anchor=tk.W, padx=12, pady=(8, 2))
         
-        self.log = tk.Text(results_card, height=18, bg=CARD, fg=TEXT, font=("Arial", 10), relief=tk.FLAT, state=tk.DISABLED, wrap=tk.WORD, padx=10, pady=4)
-        self.log.pack(fill=tk.BOTH, expand=True, padx=4, pady=(0, 8))
+        self.log = tk.Text(results_card, height=16, bg=CARD, fg=TEXT, font=("Arial", 9), relief=tk.FLAT, state=tk.DISABLED, wrap=tk.WORD, padx=8, pady=4)
+        self.log.pack(fill=tk.BOTH, expand=True, padx=4, pady=(0, 6))
         
+        # Footer
         footer = tk.Frame(self.root, bg=BG)
-        footer.pack(fill=tk.X, padx=16, pady=(0, 12))
+        footer.pack(fill=tk.X, padx=16, pady=(0, 10))
         
         self.count_label = tk.Label(footer, text="", bg=BG, fg=TEXT_MUTED, font=("Arial", 9))
         self.count_label.pack(side=tk.LEFT)
+        
+    def update_preset_list(self):
+        presets = list(self.presets.keys())
+        self.preset_combo["values"] = presets
+        
+    def on_keyword_change(self, event=None):
+        keyword = self.keyword_entry.get().strip().lower()
+        if keyword in self.presets:
+            self.preset_var.set(keyword)
+            self.apply_preset(keyword)
+            
+    def load_preset(self, event=None):
+        name = self.preset_var.get()
+        if name in self.presets:
+            self.apply_preset(name)
+            self.keyword_entry.delete(0, tk.END)
+            self.keyword_entry.insert(0, name)
+            
+    def apply_preset(self, name):
+        preset = self.presets.get(name, {})
+        self.blacklist_text.delete("1.0", tk.END)
+        self.blacklist_text.insert("1.0", ", ".join(preset.get("blacklist", [])))
+        self.whitelist_text.delete("1.0", tk.END)
+        self.whitelist_text.insert("1.0", ", ".join(preset.get("whitelist", [])))
+        
+    def save_current_preset(self):
+        keyword = self.keyword_entry.get().strip().lower()
+        if not keyword:
+            return
+        bl = [x.strip() for x in self.blacklist_text.get("1.0", tk.END).split(",") if x.strip()]
+        wl = [x.strip() for x in self.whitelist_text.get("1.0", tk.END).split(",") if x.strip()]
+        self.presets[keyword] = {"blacklist": bl, "whitelist": wl}
+        self.save_presets()
+        self.update_preset_list()
+        self.preset_var.set(keyword)
+        self.log_msg(f"Preset '{keyword}' salvo", ACCENT)
+        
+    def get_filters(self):
+        bl = [x.strip() for x in self.blacklist_text.get("1.0", tk.END).split(",") if x.strip()]
+        wl = [x.strip() for x in self.whitelist_text.get("1.0", tk.END).split(",") if x.strip()]
+        return bl, wl
         
     def log_msg(self, msg, color=None):
         self.log.config(state=tk.NORMAL)
@@ -188,6 +299,7 @@ class ScannerApp:
             self.root.after(0, self.finish_scan)
             
     async def do_scan(self, keyword):
+        blacklist, whitelist = self.get_filters()
         self.root.after(0, lambda: self.set_status("Conectando...", PRIMARY))
         
         self.client = TelegramClient(SESSION, API_ID, API_HASH)
@@ -207,13 +319,17 @@ class ScannerApp:
         total = len(bots)
         self.root.after(0, lambda: self.progress.config(maximum=total))
         self.root.after(0, lambda: self.log_msg(f"Encontrados {total} bots", TEXT_MUTED))
+        if blacklist:
+            self.root.after(0, lambda: self.log_msg(f"Blacklist: {', '.join(blacklist)}", DANGER))
+        if whitelist:
+            self.root.after(0, lambda: self.log_msg(f"Whitelist: {', '.join(whitelist)}", ACCENT))
         self.root.after(0, lambda: self.log_msg(""))
         
         for i, username in enumerate(bots):
             self.root.after(0, lambda i=i, u=username, t=total: self.set_status(f"[{i+1}/{t}] {u}", PRIMARY))
             self.root.after(0, lambda i=i: self.progress.config(value=i+1))
             
-            products = await self.scan_bot(username, keyword)
+            products = await self.scan_bot(username, keyword, blacklist, whitelist)
             for p in products:
                 self.results.append(p)
                 price = p.get("price")
@@ -265,7 +381,7 @@ class ScannerApp:
             pass
         return bots
         
-    async def scan_bot(self, username, keyword):
+    async def scan_bot(self, username, keyword, blacklist, whitelist):
         products = []
         try:
             entity = await asyncio.wait_for(self.client.get_entity(username), timeout=7)
@@ -303,13 +419,14 @@ class ScannerApp:
                                 p = extract_price(lm.text)
                                 if p:
                                     title = extract_title(lm.text, keyword) or btn_text.strip()
-                                    products.append({
-                                        "username": username,
-                                        "label": title,
-                                        "price": p,
-                                        "out_of_stock": is_out_of_stock(lm.text),
-                                        "last_restock": last_restock,
-                                    })
+                                    if passes_filters(title, blacklist, whitelist):
+                                        products.append({
+                                            "username": username,
+                                            "label": title,
+                                            "price": p,
+                                            "out_of_stock": is_out_of_stock(lm.text),
+                                            "last_restock": last_restock,
+                                        })
                                     break
                     except:
                         pass
@@ -324,13 +441,14 @@ class ScannerApp:
                         p = extract_price(msg.text)
                         if p:
                             title = extract_title(msg.text, keyword) or username
-                            products.append({
-                                "username": username,
-                                "label": title,
-                                "price": p,
-                                "out_of_stock": is_out_of_stock(msg.text),
-                                "last_restock": last_restock,
-                            })
+                            if passes_filters(title, blacklist, whitelist):
+                                products.append({
+                                    "username": username,
+                                    "label": title,
+                                    "price": p,
+                                    "out_of_stock": is_out_of_stock(msg.text),
+                                    "last_restock": last_restock,
+                                })
                             break
                 except:
                     pass
