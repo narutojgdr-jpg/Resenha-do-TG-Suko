@@ -22,7 +22,6 @@ SESSION = "resenha_session"
 DELAY_BETWEEN = 2
 FOLDER_NAME = "LOJAS"
 
-# Buttons we try to click when looking for products
 PRODUCT_BUTTONS = [
     "Browse Products", "Browse", "Products", "Shop", "Buy", "Menu",
     "Store", "Catalog", "Services", "Premium", "AI", "Gemini",
@@ -61,7 +60,7 @@ def extract_price(text: str):
         if m:
             try:
                 val = float(m.group(1))
-                if 0.1 <= val <= 100:  # reasonable price range
+                if 0.1 <= val <= 100:
                     return val
             except:
                 pass
@@ -83,7 +82,6 @@ def clean_text(text):
     return cleaned.lower().strip()
 
 async def click_any_button(msg, keywords):
-    """Try to click any button that matches one of the keywords."""
     if not msg or not msg.reply_markup or not hasattr(msg.reply_markup, "rows"):
         return False
     markup = msg.reply_markup
@@ -103,7 +101,6 @@ async def click_any_button(msg, keywords):
     return False
 
 async def try_find_with_price(entity, keyword):
-    """Look for keyword + price in recent messages."""
     await asyncio.sleep(1.2)
     msgs = await client.get_messages(entity, limit=12)
     keyword_lower = keyword.lower()
@@ -115,7 +112,7 @@ async def try_find_with_price(entity, keyword):
             continue
         price = extract_price(msg.text)
         if price is None:
-            continue  # skip if no price
+            continue
 
         out_of_stock = is_out_of_stock(msg.text)
         last_restock = None
@@ -140,19 +137,76 @@ async def try_find_with_price(entity, keyword):
         }
     return None
 
+async def bot_responded(entity):
+    """Check if the bot sent any message recently."""
+    try:
+        msgs = await client.get_messages(entity, limit=8)
+        me = await client.get_me()
+        for m in msgs:
+            if m.sender_id and m.sender_id != me.id:
+                return True
+    except:
+        pass
+    return False
+
+async def clean_chat(entity):
+    """Delete messages sent by us and recent bot menu messages."""
+    try:
+        me = await client.get_me()
+        msgs = await client.get_messages(entity, limit=30)
+        to_delete = []
+        for m in msgs:
+            if m.sender_id == me.id or (m.reply_markup or (m.text and len(m.text) < 500)):
+                to_delete.append(m.id)
+        if to_delete:
+            await client.delete_messages(entity, to_delete)
+            print(f"    Cleaned {len(to_delete)} messages")
+    except Exception as e:
+        print(f"    Clean error: {e}")
+
+async def remove_from_folder(username):
+    """Remove a bot from the LOJAS folder."""
+    try:
+        result = await client(functions.messages.GetDialogFiltersRequest())
+        for f in result.filters:
+            if isinstance(f, types.DialogFilter):
+                title = getattr(f, "title", "")
+                if isinstance(title, types.TextWithEntities):
+                    title = title.text
+                if str(title).upper() == FOLDER_NAME.upper():
+                    # Build new include_peers without this bot
+                    new_peers = []
+                    for peer in getattr(f, "include_peers", []):
+                        try:
+                            entity = await client.get_entity(peer)
+                            uname = "@" + entity.username if hasattr(entity, "username") and entity.username else None
+                            if uname != username:
+                                new_peers.append(peer)
+                        except:
+                            new_peers.append(peer)
+                    f.include_peers = new_peers
+                    await client(functions.messages.UpdateDialogFilterRequest(
+                        id=f.id,
+                        filter=f
+                    ))
+                    print(f"    Removed {username} from {FOLDER_NAME}")
+                    return True
+    except Exception as e:
+        print(f"    Could not remove from folder: {e}")
+    return False
+
 async def explore_bot(entity, keyword):
-    """Try multiple ways to find the product with a price."""
-    # 1. Just /start
     try:
         await client.send_message(entity, "/start")
-        await asyncio.sleep(2)
+        await asyncio.sleep(2.5)
+        if not await bot_responded(entity):
+            return "dead"
         res = await try_find_with_price(entity, keyword)
         if res:
             return res
     except:
-        pass
+        return "dead"
 
-    # 2. Click product-related buttons on the latest messages
     for attempt in range(3):
         msgs = await client.get_messages(entity, limit=6)
         clicked = False
@@ -168,7 +222,6 @@ async def explore_bot(entity, keyword):
         else:
             break
 
-    # 3. Try common commands
     for cmd in ["/shop", "/products", "/menu", "/buy"]:
         try:
             await client.send_message(entity, cmd)
@@ -179,7 +232,6 @@ async def explore_bot(entity, keyword):
         except:
             pass
 
-    # 4. One more pass clicking buttons (categories)
     msgs = await client.get_messages(entity, limit=8)
     for m in msgs:
         if await click_any_button(m, [keyword, "Gemini", "AI", "Premium", "ChatGPT", "Claude"]):
@@ -194,11 +246,20 @@ async def scan_bot(username, keyword):
     try:
         entity = await client.get_entity(username)
         result = await explore_bot(entity, keyword)
+
+        # Clean messages after analysis
+        await clean_chat(entity)
+
+        if result == "dead":
+            await remove_from_folder(username)
+            return {"username": username, "status": "removed_dead", "price": None}
+
         if result:
             result["username"] = username
             result["at"] = datetime.now(timezone.utc).isoformat()
             print(f"  Found: {result['snippet'][:70]}...")
             return result
+
         return {"username": username, "status": "not_found", "price": None}
     except FloodWaitError as e:
         print(f"FloodWait {e.seconds}s")
